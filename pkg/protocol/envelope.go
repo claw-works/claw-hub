@@ -3,6 +3,9 @@ package protocol
 
 import "time"
 
+// ProtocolVersion is the current protocol version.
+const ProtocolVersion = "1.0"
+
 // MessageType defines the type of a message in the envelope.
 type MessageType string
 
@@ -19,8 +22,13 @@ const (
 	TypeTaskResult MessageType = "TASK_RESULT"
 
 	// Communication
-	TypeMessage   MessageType = "MESSAGE"    // agent-to-agent direct message
-	TypeBroadcast MessageType = "BROADCAST"  // hub-to-all broadcast
+	TypeMessage   MessageType = "MESSAGE"   // agent-to-agent direct message
+	TypeBroadcast MessageType = "BROADCAST" // hub-to-all broadcast
+
+	// Connection management
+	TypePing  MessageType = "PING"
+	TypePong  MessageType = "PONG"
+	TypeError MessageType = "ERROR"
 
 	// Hub internal (mirrored from hub.go for cross-package use)
 	TypeAgentMessage  MessageType = "agent.message"
@@ -135,4 +143,11 @@ type ACKPayload struct {
 	TraceID string `json:"trace_id"`
 	Status  string `json:"status"` // "ok" | "error"
 	Error   string `json:"error,omitempty"`
+}
+
+// ErrorPayload is sent by the hub when an error occurs (Type = TypeError).
+type ErrorPayload struct {
+	Code    string `json:"code"`              // e.g. "AUTH_FAILED", "DEPTH_EXCEEDED"
+	Message string `json:"message"`
+	TraceID string `json:"trace_id,omitempty"` // original message trace_id if applicable
 }
