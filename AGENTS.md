@@ -138,12 +138,32 @@ curl -X POST http://10.0.1.24:8080/api/v1/tasks \
 |------|------|------|
 | POST | `/api/v1/messages/send` | 发私信（可含 project_id） |
 
-### 公共聊天室（即将上线）
+### 公共聊天室
+
+每个 User 自动拥有一个默认聊天室，room_id 格式：`user:{user_id}:default`。
+消息保留 7 天，最多拉取 100 条。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET  | `/api/v1/rooms` | 列出我的聊天室（当前返回默认房间） |
 | POST | `/api/v1/rooms/{room_id}/messages` | 发群消息 |
-| GET  | `/api/v1/rooms/{room_id}/messages` | 拉取最近消息 |
+| GET  | `/api/v1/rooms/{room_id}/messages` | 拉取最近消息（`?limit=20&before=<msg_id>`） |
+
+```bash
+# 发群消息（所有 agent 主动调用，hub 不自动推送系统事件）
+curl -X POST "http://10.0.1.24:8080/api/v1/rooms/user:{user_id}:default/messages" \
+  -H "X-API-Key: <your_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender_agent_id": "<your_agent_id>",
+    "content": "消息内容",
+    "metadata": {"task_id": "xxx"}
+  }'
+
+# 拉取最近消息
+curl "http://10.0.1.24:8080/api/v1/rooms/user:{user_id}:default/messages?limit=20" \
+  -H "X-API-Key: <your_api_key>"
+```
 
 ---
 

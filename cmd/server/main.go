@@ -18,6 +18,7 @@ import (
 	"github.com/claw-works/claw-hub/internal/hub"
 	"github.com/claw-works/claw-hub/internal/notify"
 	"github.com/claw-works/claw-hub/internal/project"
+	"github.com/claw-works/claw-hub/internal/room"
 	"github.com/claw-works/claw-hub/internal/store"
 	"github.com/claw-works/claw-hub/internal/task"
 	"github.com/claw-works/claw-hub/pkg/protocol"
@@ -32,6 +33,7 @@ type Server struct {
 	tasks    *task.PGStore
 	projects *project.PGStore
 	hub      *hub.Hub
+	rooms    *room.Store
 }
 
 func getenv(key, fallback string) string {
@@ -63,6 +65,7 @@ func main() {
 		tasks:    task.NewPGStore(db),
 		projects: project.NewPGStore(db),
 		hub:      h,
+		rooms:    room.NewStore(db.Mongo),
 	}
 
 	// Wire up WS REGISTER → update agent capabilities + last_seen in DB
@@ -210,6 +213,11 @@ func main() {
 
 		// Message routes
 		r.Post("/messages/send", s.sendMessage)
+
+		// Room routes (public group chat per user)
+		r.Get("/rooms", s.listRooms)
+		r.Post("/rooms/{room_id}/messages", s.postRoomMessage)
+		r.Get("/rooms/{room_id}/messages", s.listRoomMessages)
 	})
 
 	addr := getenv("ADDR", ":8080")
@@ -645,6 +653,88 @@ func (s *Server) listProjectTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, tasks)
+}
+
+// ─── Room Handlers ─────────────────────────────────────────────────────────
+
+// listRooms returns the default room for the authenticated user.
+func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := room.DefaultRoomID(user.ID)
+	jsonResp(w, http.StatusOK, []map[string]string{
+		{"id": roomID, "user_id": user.ID, "name": "default"},
+	})
+}
+
+// postRoomMessage posts a message to a room.
+func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "room_id")
+
+	// Validate that the room belongs to the authenticated user
+	expectedRoomID := room.DefaultRoomID(user.ID)
+	if roomID != expectedRoomID {
+		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		SenderAgentID string                 `json:"sender_agent_id"`
+		Content       string                 `json:"content"`
+		Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Content == "" {
+		http.Error(w, "content required", http.StatusBadRequest)
+		return
+	}
+
+	msg, err := s.rooms.Post(r.Context(), roomID, req.SenderAgentID, req.Content, req.Metadata)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusCreated, msg)
+}
+
+// listRoomMessages returns recent messages from a room.
+func (s *Server) listRoomMessages(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "room_id")
+
+	// Validate that the room belongs to the authenticated user
+	expectedRoomID := room.DefaultRoomID(user.ID)
+	if roomID != expectedRoomID {
+		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
+		return
+	}
+
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	beforeID := r.URL.Query().Get("before")
+
+	msgs, err := s.rooms.List(r.Context(), roomID, limit, beforeID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if msgs == nil {
+		msgs = []*room.Message{}
+	}
+	jsonResp(w, http.StatusOK, msgs)
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
