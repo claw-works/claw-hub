@@ -14,6 +14,7 @@ import (
 
 	"github.com/claw-works/claw-hub/internal/agent"
 	"github.com/claw-works/claw-hub/internal/hub"
+	"github.com/claw-works/claw-hub/internal/notify"
 	"github.com/claw-works/claw-hub/internal/store"
 	"github.com/claw-works/claw-hub/internal/task"
 )
@@ -150,16 +151,17 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title                string   `json:"title"`
-		Description          string   `json:"description"`
-		RequiredCapabilities []string `json:"required_capabilities"`
-		Priority             int      `json:"priority"`
+		Title                string              `json:"title"`
+		Description          string              `json:"description"`
+		RequiredCapabilities []string            `json:"required_capabilities"`
+		Priority             int                 `json:"priority"`
+		ReportChannel        *task.ReportChannel `json:"report_channel"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	t, err := s.tasks.Create(r.Context(), req.Title, req.Description, req.RequiredCapabilities, task.Priority(req.Priority))
+	t, err := s.tasks.Create(r.Context(), req.Title, req.Description, req.RequiredCapabilities, task.Priority(req.Priority), req.ReportChannel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -234,6 +236,27 @@ func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 	}
 	t, _ := s.tasks.Get(r.Context(), id)
 	s.hub.Broadcast(hub.Message{Type: hub.MsgTypeBroadcast, Payload: map[string]interface{}{"event": "task.done", "task": t}})
+
+	// Fire outgoing webhook if report_channel is configured
+	if t != nil && t.ReportChannel != nil && t.ReportChannel.WebhookURL != "" {
+		go func() {
+			evt := notify.TaskEvent{
+				Event:           "task.done",
+				TaskID:          t.ID,
+				TaskTitle:       t.Title,
+				Status:          string(t.Status),
+				Result:          t.Result,
+				AssignedAgentID: t.AssignedAgentID,
+				CompletedAt:     *t.CompletedAt,
+				DiscordThreadID: t.ReportChannel.DiscordThreadID,
+				FeishuChatID:    t.ReportChannel.FeishuChatID,
+			}
+			if err := notify.Send(context.Background(), t.ReportChannel.WebhookURL, evt); err != nil {
+				log.Printf("completeTask: webhook error: %v", err)
+			}
+		}()
+	}
+
 	jsonResp(w, http.StatusOK, t)
 }
 
@@ -251,6 +274,27 @@ func (s *Server) failTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, _ := s.tasks.Get(r.Context(), id)
+
+	// Fire outgoing webhook if report_channel is configured
+	if t != nil && t.ReportChannel != nil && t.ReportChannel.WebhookURL != "" {
+		go func() {
+			evt := notify.TaskEvent{
+				Event:           "task.failed",
+				TaskID:          t.ID,
+				TaskTitle:       t.Title,
+				Status:          string(t.Status),
+				Error:           t.ErrorMsg,
+				AssignedAgentID: t.AssignedAgentID,
+				CompletedAt:     *t.CompletedAt,
+				DiscordThreadID: t.ReportChannel.DiscordThreadID,
+				FeishuChatID:    t.ReportChannel.FeishuChatID,
+			}
+			if err := notify.Send(context.Background(), t.ReportChannel.WebhookURL, evt); err != nil {
+				log.Printf("failTask: webhook error: %v", err)
+			}
+		}()
+	}
+
 	jsonResp(w, http.StatusOK, t)
 }
 
