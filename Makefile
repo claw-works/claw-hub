@@ -1,15 +1,22 @@
-.PHONY: build test run docker-up docker-down clean
+.PHONY: build build-agent test run docker-up docker-down clean
 
 BINARY=claw-hub
+AGENT_BINARY=claw-hub-agent
 CMD_DIR=./cmd/server
+AGENT_CMD_DIR=./cmd/agent
 
 ## build: compile the server binary
 build:
 	go build -o $(BINARY) $(CMD_DIR)
 
-## build-linux-arm64: cross-compile for Linux ARM64
+## build-agent: compile the claw-hub-agent binary
+build-agent:
+	go build -o $(AGENT_BINARY) $(AGENT_CMD_DIR)
+
+## build-linux-arm64: cross-compile server + agent for Linux ARM64
 build-linux-arm64:
 	GOOS=linux GOARCH=arm64 go build -o $(BINARY)-linux-arm64 $(CMD_DIR)
+	GOOS=linux GOARCH=arm64 go build -o $(AGENT_BINARY)-linux-arm64 $(AGENT_CMD_DIR)
 
 ## test: run all tests
 test:
