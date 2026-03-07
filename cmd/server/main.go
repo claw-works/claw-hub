@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/claw-works/claw-hub/internal/agent"
 	"github.com/claw-works/claw-hub/internal/hub"
+	"github.com/claw-works/claw-hub/internal/store"
 	"github.com/claw-works/claw-hub/internal/task"
 )
 
@@ -20,22 +23,42 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	agents *agent.Registry
-	tasks  *task.Store
+	agents *agent.PGRegistry
+	tasks  *task.PGStore
 	hub    *hub.Hub
 }
 
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func main() {
+	ctx := context.Background()
+
+	pgDSN := getenv("PG_DSN", "postgres://clawhub:clawhub2026@10.0.1.24:5432/clawhub")
+	mongoURI := getenv("MONGO_URI", "mongodb://10.0.1.24:27017")
+
+	db, err := store.Connect(ctx, pgDSN, mongoURI, "clawhub")
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+
 	s := &Server{
-		agents: agent.NewRegistry(),
-		tasks:  task.NewStore(),
+		agents: agent.NewPGRegistry(db),
+		tasks:  task.NewPGStore(db),
 		hub:    hub.New(),
 	}
 
 	// Background: mark stale agents offline every 30s
 	go func() {
 		for range time.Tick(30 * time.Second) {
-			s.agents.MarkOfflineStale(60 * time.Second)
+			s.agents.MarkOfflineStale(ctx, 60*time.Second)
 		}
 	}()
 
@@ -43,6 +66,11 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
+
+	// Health
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		jsonResp(w, http.StatusOK, map[string]string{"status": "ok", "service": "claw-hub"})
+	})
 
 	// Agent routes
 	r.Post("/api/v1/agents/register", s.registerAgent)
@@ -60,8 +88,9 @@ func main() {
 	// WebSocket
 	r.Get("/ws", s.wsHandler)
 
-	log.Println("claw-hub listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	addr := getenv("ADDR", ":8080")
+	log.Printf("claw-hub listening on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, r))
 }
 
 // ─── Agent Handlers ────────────────────────────────────────────────────────
@@ -75,13 +104,17 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a := s.agents.Register(req.Name, req.Capabilities)
+	a, err := s.agents.Register(r.Context(), req.Name, req.Capabilities)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	jsonResp(w, http.StatusCreated, a)
 }
 
 func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if !s.agents.Heartbeat(id) {
+	if !s.agents.Heartbeat(r.Context(), id) {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -89,7 +122,12 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
-	jsonResp(w, http.StatusOK, s.agents.List())
+	agents, err := s.agents.List(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, agents)
 }
 
 // ─── Task Handlers ─────────────────────────────────────────────────────────
@@ -105,17 +143,23 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	t := s.tasks.Create(req.Title, req.Description, req.RequiredCapabilities, task.Priority(req.Priority))
+	t, err := s.tasks.Create(r.Context(), req.Title, req.Description, req.RequiredCapabilities, task.Priority(req.Priority))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// Auto-assign to a capable online agent
 	if len(req.RequiredCapabilities) > 0 {
-		if capable := s.agents.FindCapable(req.RequiredCapabilities); len(capable) > 0 {
+		if capable, err := s.agents.FindCapable(r.Context(), req.RequiredCapabilities); err == nil && len(capable) > 0 {
 			picked := capable[0]
-			s.tasks.Claim(t.ID, picked.ID)
-			s.hub.Send(picked.ID, hub.Message{
-				Type:    hub.MsgTypeTaskAssigned,
-				Payload: t,
-			})
+			if s.tasks.Claim(r.Context(), t.ID, picked.ID) {
+				t, _ = s.tasks.Get(r.Context(), t.ID)
+				s.hub.Send(picked.ID, hub.Message{
+					Type:    hub.MsgTypeTaskAssigned,
+					Payload: t,
+				})
+			}
 		}
 	}
 
@@ -124,13 +168,18 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
-	jsonResp(w, http.StatusOK, s.tasks.List(status))
+	tasks, err := s.tasks.List(r.Context(), status)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, tasks)
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	t, ok := s.tasks.Get(id)
-	if !ok {
+	t, err := s.tasks.Get(r.Context(), id)
+	if err != nil {
 		http.Error(w, "task not found", http.StatusNotFound)
 		return
 	}
@@ -146,11 +195,11 @@ func (s *Server) claimTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !s.tasks.Claim(id, req.AgentID) {
+	if !s.tasks.Claim(r.Context(), id, req.AgentID) {
 		http.Error(w, "cannot claim task", http.StatusConflict)
 		return
 	}
-	t, _ := s.tasks.Get(id)
+	t, _ := s.tasks.Get(r.Context(), id)
 	jsonResp(w, http.StatusOK, t)
 }
 
@@ -163,11 +212,11 @@ func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !s.tasks.Complete(id, req.Result) {
+	if !s.tasks.Complete(r.Context(), id, req.Result) {
 		http.Error(w, "cannot complete task", http.StatusConflict)
 		return
 	}
-	t, _ := s.tasks.Get(id)
+	t, _ := s.tasks.Get(r.Context(), id)
 	s.hub.Broadcast(hub.Message{Type: hub.MsgTypeBroadcast, Payload: map[string]interface{}{"event": "task.done", "task": t}})
 	jsonResp(w, http.StatusOK, t)
 }
@@ -181,11 +230,11 @@ func (s *Server) failTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !s.tasks.Fail(id, req.Error) {
+	if !s.tasks.Fail(r.Context(), id, req.Error) {
 		http.Error(w, "cannot fail task", http.StatusConflict)
 		return
 	}
-	t, _ := s.tasks.Get(id)
+	t, _ := s.tasks.Get(r.Context(), id)
 	jsonResp(w, http.StatusOK, t)
 }
 
