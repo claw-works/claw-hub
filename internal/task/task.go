@@ -21,19 +21,31 @@ const (
 	PriorityHigh   Priority = 10
 )
 
+// ReportChannel describes where to send task completion notifications.
+// Hub calls WebhookURL (if set) with an HTTP POST when the task finishes.
+// DiscordThreadID / FeishuChatID are opaque metadata forwarded in the webhook
+// payload so the receiver knows which channel to post into — hub never calls
+// Discord or Feishu directly.
+type ReportChannel struct {
+	WebhookURL      string `json:"webhook_url,omitempty"`
+	DiscordThreadID string `json:"discord_thread_id,omitempty"`
+	FeishuChatID    string `json:"feishu_chat_id,omitempty"`
+}
+
 type Task struct {
-	ID                   string    `json:"id"`
-	Title                string    `json:"title"`
-	Description          string    `json:"description"`
-	RequiredCapabilities []string  `json:"required_capabilities"`
-	Priority             Priority  `json:"priority"`
-	Status               Status    `json:"status"`
-	AssignedAgentID      string    `json:"assigned_agent_id,omitempty"`
-	Result               string    `json:"result,omitempty"`
-	ErrorMsg             string    `json:"error,omitempty"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-	CompletedAt          *time.Time `json:"completed_at,omitempty"`
+	ID                   string          `json:"id"`
+	Title                string          `json:"title"`
+	Description          string          `json:"description"`
+	RequiredCapabilities []string        `json:"required_capabilities"`
+	Priority             Priority        `json:"priority"`
+	Status               Status          `json:"status"`
+	AssignedAgentID      string          `json:"assigned_agent_id,omitempty"`
+	Result               string          `json:"result,omitempty"`
+	ErrorMsg             string          `json:"error,omitempty"`
+	ReportChannel        *ReportChannel  `json:"report_channel,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
+	CompletedAt          *time.Time      `json:"completed_at,omitempty"`
 }
 
 type Store struct {

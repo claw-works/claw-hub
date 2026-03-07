@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -18,7 +19,7 @@ func NewPGStore(db *store.DB) *PGStore {
 	return &PGStore{db: db}
 }
 
-func (s *PGStore) Create(ctx context.Context, title, description string, required []string, priority Priority) (*Task, error) {
+func (s *PGStore) Create(ctx context.Context, title, description string, required []string, priority Priority, rc *ReportChannel) (*Task, error) {
 	t := &Task{
 		ID:                   uuid.New().String(),
 		Title:                title,
@@ -26,13 +27,24 @@ func (s *PGStore) Create(ctx context.Context, title, description string, require
 		RequiredCapabilities: required,
 		Priority:             priority,
 		Status:               StatusPending,
+		ReportChannel:        rc,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
 	}
+
+	var rcJSON []byte
+	if rc != nil {
+		var err error
+		rcJSON, err = json.Marshal(rc)
+		if err != nil {
+			return nil, fmt.Errorf("create task: marshal report_channel: %w", err)
+		}
+	}
+
 	_, err := s.db.PG.Exec(ctx,
-		`INSERT INTO tasks (id, title, description, required_capabilities, priority, status, created_at, updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		t.ID, t.Title, t.Description, t.RequiredCapabilities, t.Priority, string(t.Status), t.CreatedAt, t.UpdatedAt,
+		`INSERT INTO tasks (id, title, description, required_capabilities, priority, status, report_channel, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		t.ID, t.Title, t.Description, t.RequiredCapabilities, t.Priority, string(t.Status), rcJSON, t.CreatedAt, t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
@@ -44,7 +56,7 @@ func (s *PGStore) Create(ctx context.Context, title, description string, require
 func (s *PGStore) Get(ctx context.Context, id string) (*Task, error) {
 	row := s.db.PG.QueryRow(ctx,
 		`SELECT id,title,description,required_capabilities,priority,status,
-		        assigned_agent_id,result,error,created_at,updated_at,completed_at
+		        assigned_agent_id,result,error,report_channel,created_at,updated_at,completed_at
 		 FROM tasks WHERE id=$1`, id)
 	return scanTask(row)
 }
@@ -55,12 +67,12 @@ func (s *PGStore) List(ctx context.Context, statusFilter string) ([]*Task, error
 	if statusFilter == "" {
 		rows, err = s.db.PG.Query(ctx,
 			`SELECT id,title,description,required_capabilities,priority,status,
-			        assigned_agent_id,result,error,created_at,updated_at,completed_at
+			        assigned_agent_id,result,error,report_channel,created_at,updated_at,completed_at
 			 FROM tasks ORDER BY priority DESC, created_at ASC`)
 	} else {
 		rows, err = s.db.PG.Query(ctx,
 			`SELECT id,title,description,required_capabilities,priority,status,
-			        assigned_agent_id,result,error,created_at,updated_at,completed_at
+			        assigned_agent_id,result,error,report_channel,created_at,updated_at,completed_at
 			 FROM tasks WHERE status=$1 ORDER BY priority DESC, created_at ASC`, statusFilter)
 	}
 	if err != nil {
@@ -128,9 +140,10 @@ func scanTask(s scanner) (*Task, error) {
 	t := &Task{}
 	var status string
 	var assignedAgentID, result, errMsg *string
+	var rcJSON []byte
 	err := s.Scan(
 		&t.ID, &t.Title, &t.Description, &t.RequiredCapabilities,
-		&t.Priority, &status, &assignedAgentID, &result, &errMsg,
+		&t.Priority, &status, &assignedAgentID, &result, &errMsg, &rcJSON,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt,
 	)
 	if err != nil {
@@ -146,5 +159,12 @@ func scanTask(s scanner) (*Task, error) {
 	if errMsg != nil {
 		t.ErrorMsg = *errMsg
 	}
+	if len(rcJSON) > 0 {
+		var rc ReportChannel
+		if err := json.Unmarshal(rcJSON, &rc); err == nil {
+			t.ReportChannel = &rc
+		}
+	}
 	return t, nil
 }
+

@@ -62,10 +62,14 @@ func (db *DB) Migrate(ctx context.Context) error {
 			assigned_agent_id     TEXT,
 			result                TEXT,
 			error                 TEXT,
+			report_channel        JSONB,
 			created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			completed_at          TIMESTAMPTZ
 		);
+
+		-- Idempotent: add report_channel if the table already existed without it.
+		ALTER TABLE tasks ADD COLUMN IF NOT EXISTS report_channel JSONB;
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
