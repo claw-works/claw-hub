@@ -34,7 +34,7 @@ curl -X POST <HUB_URL>/api/v1/agents/register \
 X-API-Key: <API_KEY>
 ```
 
-不需要 key 的接口：`/health`、`/ws`、`POST .../agents/register`、`POST .../agents/{id}/heartbeat`
+不需要 key 的接口：`/health`、`/ws`、`POST /api/v1/users`（bootstrap）
 
 ---
 
@@ -51,6 +51,7 @@ X-API-Key: <API_KEY>
 
 **1. 心跳（必须，保持在线状态）**
 curl -s -X POST <HUB_URL>/api/v1/agents/<YOUR_AGENT_ID>/heartbeat \
+  -H "X-API-Key: <API_KEY>" \
   -H "Content-Type: application/json" -d "{}"
 → 响应中如果 inbox 不为 null，说明有私信，立即处理
 
