@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/claw-works/claw-hub/internal/project"
+	"github.com/claw-works/pincer/internal/project"
 )
 
 type contextKey string

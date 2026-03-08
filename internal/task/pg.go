@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/claw-works/claw-hub/internal/store"
+	"github.com/claw-works/pincer/internal/store"
 	"github.com/google/uuid"
 )
 

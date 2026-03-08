@@ -1,4 +1,4 @@
-module github.com/claw-works/claw-hub
+module github.com/claw-works/pincer
 
 go 1.24.0
 

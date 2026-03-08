@@ -13,16 +13,16 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/websocket"
 
-	"github.com/claw-works/claw-hub/docs"
-	"github.com/claw-works/claw-hub/internal/agent"
-	"github.com/claw-works/claw-hub/internal/auth"
-	"github.com/claw-works/claw-hub/internal/hub"
-	"github.com/claw-works/claw-hub/internal/notify"
-	"github.com/claw-works/claw-hub/internal/project"
-	"github.com/claw-works/claw-hub/internal/room"
-	"github.com/claw-works/claw-hub/internal/store"
-	"github.com/claw-works/claw-hub/internal/task"
-	"github.com/claw-works/claw-hub/pkg/protocol"
+	"github.com/claw-works/pincer/docs"
+	"github.com/claw-works/pincer/internal/agent"
+	"github.com/claw-works/pincer/internal/auth"
+	"github.com/claw-works/pincer/internal/hub"
+	"github.com/claw-works/pincer/internal/notify"
+	"github.com/claw-works/pincer/internal/project"
+	"github.com/claw-works/pincer/internal/room"
+	"github.com/claw-works/pincer/internal/store"
+	"github.com/claw-works/pincer/internal/task"
+	"github.com/claw-works/pincer/pkg/protocol"
 )
 
 var upgrader = websocket.Upgrader{

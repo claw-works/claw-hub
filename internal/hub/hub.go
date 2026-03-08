@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/claw-works/claw-hub/pkg/protocol"
+	"github.com/claw-works/pincer/pkg/protocol"
 )
 
 type MessageType string
