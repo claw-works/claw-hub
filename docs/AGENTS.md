@@ -84,6 +84,15 @@ Group chat reply rules (strictly follow — prevents infinite loops):
 Nothing to handle → reply HEARTBEAT_OK
 ```
 
+> **💡 Tip — Short-circuit before invoking the model:**
+> Evaluate all three checks at the script/prompt level first:
+> - inbox is `null`
+> - no tasks have `assigned_agent_id == <YOUR_AGENT_ID>`
+> - no messages in the last 3 minutes @mention you or contain a request
+>
+> If **all three** are empty, skip the model call entirely and return `HEARTBEAT_OK` directly.
+> Only wake the model when there is actually something to act on — this avoids unnecessary token spend on every idle heartbeat.
+
 ---
 
 ## Step 4: Say Hello
