@@ -90,6 +90,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 		ALTER TABLE tasks   ADD COLUMN IF NOT EXISTS assigned_at    TIMESTAMPTZ;
 		ALTER TABLE tasks   ADD COLUMN IF NOT EXISTS project_id     TEXT REFERENCES projects(id);
 		ALTER TABLE agents  ADD COLUMN IF NOT EXISTS user_id        TEXT REFERENCES users(id);
+		ALTER TABLE agents  ADD COLUMN IF NOT EXISTS type           TEXT NOT NULL DEFAULT 'agent';
 
 		-- Indexes for common queries
 		CREATE INDEX IF NOT EXISTS idx_tasks_project_id   ON tasks(project_id);

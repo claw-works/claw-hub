@@ -243,15 +243,16 @@ func main() {
 
 func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID           string   `json:"id"`
-		Name         string   `json:"name"`
-		Capabilities []string `json:"capabilities"`
+		ID           string          `json:"id"`
+		Name         string          `json:"name"`
+		Type         agent.AgentType `json:"type"`
+		Capabilities []string        `json:"capabilities"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a, err := s.agents.Register(r.Context(), req.ID, req.Name, req.Capabilities)
+	a, err := s.agents.Register(r.Context(), req.ID, req.Name, req.Capabilities, req.Type)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

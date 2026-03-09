@@ -8,6 +8,7 @@ import (
 )
 
 type Status string
+type AgentType string
 
 const (
 	StatusOnline  Status = "online"
@@ -15,12 +16,18 @@ const (
 	StatusBusy    Status = "busy"
 )
 
+const (
+	TypeAgent AgentType = "agent"
+	TypeHuman AgentType = "human"
+)
+
 type Agent struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Capabilities []string  `json:"capabilities"`
-	Status       Status    `json:"status"`
-	RegisteredAt time.Time `json:"registered_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Type          AgentType `json:"type"`
+	Capabilities  []string  `json:"capabilities"`
+	Status        Status    `json:"status"`
+	RegisteredAt  time.Time `json:"registered_at"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
 }
 
@@ -39,6 +46,7 @@ func (r *Registry) Register(name string, capabilities []string) *Agent {
 	a := &Agent{
 		ID:            uuid.New().String(),
 		Name:          name,
+		Type:          TypeAgent,
 		Capabilities:  capabilities,
 		Status:        StatusOnline,
 		RegisteredAt:  time.Now(),
