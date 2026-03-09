@@ -18,25 +18,29 @@ func NewPGRegistry(db *store.DB) *PGRegistry {
 	return &PGRegistry{db: db}
 }
 
-func (r *PGRegistry) Register(ctx context.Context, name string, capabilities []string) (*Agent, error) {
-	a := &Agent{
-		ID:            uuid.New().String(),
-		Name:          name,
-		Capabilities:  capabilities,
-		Status:        StatusOnline,
-		RegisteredAt:  time.Now(),
-		LastHeartbeat: time.Now(),
+// Register creates or updates an agent. If id is non-empty, that ID is used
+// (idempotent upsert: re-registering an existing agent updates its fields and
+// returns the existing record — no ghost agents). If id is empty, a new UUID
+// is generated.
+func (r *PGRegistry) Register(ctx context.Context, id, name string, capabilities []string) (*Agent, error) {
+	if id == "" {
+		id = uuid.New().String()
 	}
+	now := time.Now()
+	// Upsert: if the agent already exists, update name/caps/status/last_heartbeat
+	// but preserve the original registered_at.
 	_, err := r.db.PG.Exec(ctx,
 		`INSERT INTO agents (id, name, capabilities, status, registered_at, last_heartbeat)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (id) DO UPDATE SET name=$2, capabilities=$3, status=$4, last_heartbeat=$6`,
-		a.ID, a.Name, a.Capabilities, string(a.Status), a.RegisteredAt, a.LastHeartbeat,
+		 ON CONFLICT (id) DO UPDATE
+		   SET name=$2, capabilities=$3, status=$4, last_heartbeat=$6`,
+		id, name, capabilities, string(StatusOnline), now, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("register agent: %w", err)
 	}
-	return a, nil
+	// Return the current DB record (preserves original registered_at on upsert).
+	return r.Get(ctx, id)
 }
 
 func (r *PGRegistry) Heartbeat(ctx context.Context, id string) bool {

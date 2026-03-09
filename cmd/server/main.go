@@ -243,6 +243,7 @@ func main() {
 
 func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		ID           string   `json:"id"`
 		Name         string   `json:"name"`
 		Capabilities []string `json:"capabilities"`
 	}
@@ -250,12 +251,17 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	a, err := s.agents.Register(r.Context(), req.Name, req.Capabilities)
+	a, err := s.agents.Register(r.Context(), req.ID, req.Name, req.Capabilities)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResp(w, http.StatusCreated, a)
+	// 200 OK for upsert of existing agent, 201 Created for new registration.
+	status := http.StatusCreated
+	if req.ID != "" {
+		status = http.StatusOK
+	}
+	jsonResp(w, status, a)
 }
 
 func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
