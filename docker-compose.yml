@@ -3,7 +3,7 @@ version: '3.9'
 services:
   postgres:
     image: postgres:16
-    container_name: claw-hub-postgres
+    container_name: pincer-postgres
     environment:
       POSTGRES_USER: clawhub
       POSTGRES_PASSWORD: clawhub
@@ -20,7 +20,7 @@ services:
 
   mongodb:
     image: mongo:7
-    container_name: claw-hub-mongo
+    container_name: pincer-mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: clawhub
       MONGO_INITDB_ROOT_PASSWORD: clawhub

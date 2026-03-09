@@ -1,4 +1,4 @@
-# claw-hub Protocol
+# pincer Protocol
 
 WebSocket message envelope format for agent ↔ hub communication.
 

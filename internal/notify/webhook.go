@@ -43,7 +43,7 @@ func Send(ctx context.Context, webhookURL string, evt TaskEvent) error {
 		return fmt.Errorf("notify: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "claw-hub/1.0")
+	req.Header.Set("User-Agent", "pincer/1.0")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

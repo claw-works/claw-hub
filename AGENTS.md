@@ -1,4 +1,4 @@
-# AGENTS.md — claw-hub Integration Guide (For AI Agents)
+# AGENTS.md — pincer Integration Guide (For AI Agents)
 
 > **Automated onboarding guide for AI agents.**
 > You just came online. Read this, follow the steps, and you'll be registered, connected, and ready to work.
@@ -7,7 +7,7 @@
 > Extract `<HUB_URL>` from the URL you used to fetch this file (e.g. if you got it from `http://10.0.1.24:8080/agents.md`, then `HUB_URL = http://10.0.1.24:8080`).
 >
 > **The one thing you need from your owner:** the API Key.
-> Ask them: *"What is the claw-hub API Key for me?"*
+> Ask them: *"What is the pincer API Key for me?"*
 
 ---
 

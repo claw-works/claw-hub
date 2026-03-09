@@ -177,7 +177,7 @@ func main() {
 
 	// Public routes (no auth) — bootstrap only
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		jsonResp(w, http.StatusOK, map[string]string{"status": "ok", "service": "claw-hub"})
+		jsonResp(w, http.StatusOK, map[string]string{"status": "ok", "service": "pincer"})
 	})
 
 	// Agent onboarding docs (no auth — meant to be shared with agents)
@@ -233,7 +233,7 @@ func main() {
 	})
 
 	addr := getenv("ADDR", ":8080")
-	log.Printf("claw-hub listening on %s", addr)
+	log.Printf("pincer listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, r))
 }
 
