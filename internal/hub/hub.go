@@ -42,12 +42,14 @@ type Client struct {
 type inboxBackend interface {
 	SaveOffline(agentID string, msg Message)
 	PopOffline(agentID string) []Message
+	ListMessages(agentID string, fromAgentID string, limit int) []InboxMessage
 }
 
 type nopInbox struct{}
 
-func (nopInbox) SaveOffline(_ string, _ Message) {}
-func (nopInbox) PopOffline(_ string) []Message    { return nil }
+func (nopInbox) SaveOffline(_ string, _ Message)                                {}
+func (nopInbox) PopOffline(_ string) []Message                                  { return nil }
+func (nopInbox) ListMessages(_ string, _ string, _ int) []InboxMessage          { return nil }
 
 // OnRegisterFunc is called when a REGISTER message arrives over WS.
 // The hub calls this so main.go can update the agent DB record.
@@ -102,6 +104,11 @@ func (h *Hub) PopInboxHTTP(agentID string) []Message {
 		return nil
 	}
 	return h.inbox.PopOffline(agentID)
+}
+
+// ListAgentMessages returns inbox history for monitor/observability use (read-only, no pop).
+func (h *Hub) ListAgentMessages(agentID string, fromAgentID string, limit int) []InboxMessage {
+	return h.inbox.ListMessages(agentID, fromAgentID, limit)
 }
 
 func (h *Hub) Register(agentID string, conn *websocket.Conn) *Client {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -205,6 +206,7 @@ func main() {
 		r.Get("/agents", s.listAgents)
 		r.Post("/agents/{id}/heartbeat", s.agentHeartbeat)
 		r.Get("/agents/{id}/inbox", s.getInbox)
+		r.Get("/agents/{id}/messages", s.listAgentMessages)
 
 		// Project routes
 		r.Post("/projects", s.createProject)
@@ -270,6 +272,22 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getInbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	msgs := s.hub.PopInboxHTTP(id)
+	jsonResp(w, http.StatusOK, msgs)
+}
+
+func (s *Server) listAgentMessages(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	from := r.URL.Query().Get("from")
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	msgs := s.hub.ListAgentMessages(id, from, limit)
+	if msgs == nil {
+		msgs = []hub.InboxMessage{}
+	}
 	jsonResp(w, http.StatusOK, msgs)
 }
 
