@@ -204,6 +204,7 @@ func main() {
 		// Agent routes
 		r.Post("/agents/register", s.registerAgent)
 		r.Get("/agents", s.listAgents)
+		r.Delete("/agents/{id}", s.deleteAgent)
 		r.Post("/agents/{id}/heartbeat", s.agentHeartbeat)
 		r.Get("/agents/{id}/inbox", s.getInbox)
 		r.Get("/agents/{id}/messages", s.listAgentMessages)
@@ -223,6 +224,7 @@ func main() {
 		r.Patch("/tasks/{id}/claim", s.claimTask)
 		r.Patch("/tasks/{id}/complete", s.completeTask)
 		r.Patch("/tasks/{id}/fail", s.failTask)
+		r.Delete("/tasks/{id}", s.deleteTask)
 		r.Post("/tasks/reassign", s.reassignPending)
 
 		// Message routes
@@ -305,6 +307,15 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, agents)
+}
+
+func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.agents.Delete(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ─── Task Handlers ─────────────────────────────────────────────────────────
@@ -636,6 +647,15 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Project Handlers ───────────────────────────────────────────────────────
+
+func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.tasks.Delete(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	user := auth.FromContext(r.Context())

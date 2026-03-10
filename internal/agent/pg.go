@@ -155,3 +155,9 @@ func scanAgent(s scanner) (*Agent, error) {
 	a.Type = AgentType(agentType)
 	return a, nil
 }
+
+// Delete removes an agent by ID.
+func (r *PGRegistry) Delete(ctx context.Context, id string) error {
+	_, err := r.db.PG.Exec(ctx, `DELETE FROM agents WHERE id=$1`, id)
+	return err
+}

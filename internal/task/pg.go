@@ -284,3 +284,9 @@ func scanTask(s scanner) (*Task, error) {
 	return t, nil
 }
 
+
+// Delete removes a task by ID regardless of status.
+func (s *PGStore) Delete(ctx context.Context, id string) error {
+	_, err := s.db.PG.Exec(ctx, `DELETE FROM tasks WHERE id=$1`, id)
+	return err
+}
