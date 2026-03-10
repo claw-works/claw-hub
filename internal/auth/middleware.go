@@ -11,7 +11,9 @@ type contextKey string
 
 const UserContextKey contextKey = "auth_user"
 
-// Middleware validates X-API-Key header.
+// Middleware validates X-API-Key header OR ?api_key= query param.
+// Query param support is required for browser WebSocket clients which
+// cannot send custom headers during the WS upgrade handshake.
 // If the key is valid, injects the User into the request context.
 // If the key is missing or invalid, returns 401.
 // For WebSocket browser clients that cannot set headers, the key may also be

@@ -156,6 +156,48 @@ func (h *Hub) Unregister(agentID string) {
 	h.mu.Unlock()
 }
 
+// RegisterHuman registers a human user's WebSocket connection.
+// Unlike Register (used for agents with full protocol), human clients
+// use ReadLoopHuman which only handles keepalive — no REGISTER/HEARTBEAT protocol.
+// Messages sent via hub.Send(userID, ...) are delivered to this connection in real-time.
+func (h *Hub) RegisterHuman(userID string, conn *websocket.Conn) *Client {
+	c := &Client{
+		AgentID:       userID,
+		MessagingMode: "ws",
+		conn:          conn,
+		send:          make(chan []byte, 64),
+	}
+	h.mu.Lock()
+	h.clients[userID] = c
+	h.mu.Unlock()
+	go c.writePump()
+	// Deliver any pending offline messages immediately.
+	go h.deliverInbox(userID, c)
+	return c
+}
+
+// ReadLoopHuman is the read loop for human WebSocket clients.
+// It only processes ping/pong keepalive frames; unregisters on disconnect.
+func (h *Hub) ReadLoopHuman(c *Client) {
+	defer func() {
+		h.Unregister(c.AgentID)
+		close(c.send)
+		c.conn.Close()
+	}()
+	c.conn.SetReadLimit(512)
+	c.conn.SetReadDeadline(time.Now().Add(70 * time.Second))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(70 * time.Second))
+		return nil
+	})
+	for {
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+}
+
 const maxDepth = 10
 
 func (h *Hub) Send(to string, msg Message) {

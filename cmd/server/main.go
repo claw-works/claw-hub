@@ -36,6 +36,7 @@ type Server struct {
 	projects *project.PGStore
 	hub      *hub.Hub
 	monitor  *hub.MonitorHub
+	roomHub  *hub.RoomHub
 	rooms    *room.Store
 }
 
@@ -69,6 +70,7 @@ func main() {
 		projects: project.NewPGStore(db),
 		hub:      h,
 		monitor:  hub.NewMonitorHub(),
+		roomHub:  hub.NewRoomHub(),
 		rooms:    room.NewStore(db.Mongo),
 	}
 
@@ -244,6 +246,13 @@ func main() {
 		r.Get("/rooms", s.listRooms)
 		r.Post("/rooms/{room_id}/messages", s.postRoomMessage)
 		r.Get("/rooms/{room_id}/messages", s.listRoomMessages)
+		// Room chat WebSocket — real-time push for group chat
+		r.Get("/rooms/{room_id}/ws", s.roomChatWsHandler)
+
+		// Human inbox WebSocket — real-time push for human-participated single chat.
+		// Connect with: ws://<host>/api/v1/inbox/ws?api_key=<key>
+		// Agents can reach the connected human by calling hub.Send(userID, msg).
+		r.Get("/inbox/ws", s.inboxWsHandler)
 
 		// Monitor WebSocket — real-time push events to browser dashboards
 		r.Get("/ws", s.monitorWsHandler)
@@ -666,6 +675,59 @@ func (s *Server) monitorWsHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("monitor: client %s disconnected", client.GetID())
 }
 
+// roomChatWsHandler upgrades the connection to WebSocket and subscribes the
+// client to real-time room.message events for the given room_id.
+//
+// Only the authenticated user's own default room is accessible.
+// New messages pushed via postRoomMessage are delivered immediately to all
+// connected subscribers without polling.
+//
+// Usage: ws://<host>/api/v1/rooms/{room_id}/ws?api_key=<key>
+func (s *Server) roomChatWsHandler(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "room_id")
+	// Enforce room ownership: only the user's own room is permitted.
+	if roomID != room.DefaultRoomID(user.ID) {
+		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	client := s.roomHub.Subscribe(roomID, conn)
+	log.Printf("roomws: client %s subscribed to room %s (%d subs)", client.GetID(), roomID, s.roomHub.CountSubscribers(roomID))
+	s.roomHub.ReadLoop(client)
+	log.Printf("roomws: client %s disconnected from room %s", client.GetID(), roomID)
+}
+
+// inboxWsHandler upgrades the connection to WebSocket for human-participated
+// single chat. The connected user is registered in the hub under their user ID,
+// so any agent that calls hub.Send(userID, msg) delivers the message in real-time.
+//
+// Pending offline inbox messages are flushed on connect.
+//
+// Usage: ws://<host>/api/v1/inbox/ws?api_key=<key>
+func (s *Server) inboxWsHandler(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	client := s.hub.RegisterHuman(user.ID, conn)
+	log.Printf("inboxws: user %s connected", user.ID)
+	s.hub.ReadLoopHuman(client)
+	log.Printf("inboxws: user %s disconnected", user.ID)
+}
+
 // ─── User Handlers ─────────────────────────────────────────────────────────
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -820,8 +882,10 @@ func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Push real-time event to monitor WebSocket clients
+	// Push real-time event to monitor WebSocket clients (dashboard)
 	s.monitor.Broadcast("room.message", msg)
+	// Push real-time event to room-chat WebSocket subscribers
+	s.roomHub.BroadcastToRoom(roomID, "room.message", msg)
 	jsonResp(w, http.StatusCreated, msg)
 }
 
