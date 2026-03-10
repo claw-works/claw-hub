@@ -254,6 +254,9 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if req.Capabilities == nil {
+		req.Capabilities = []string{}
+	}
 	a, err := s.agents.Register(r.Context(), req.ID, req.Name, req.Capabilities, req.Type)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
