@@ -35,6 +35,7 @@ type Server struct {
 	tasks    *task.PGStore
 	projects *project.PGStore
 	hub      *hub.Hub
+	monitor  *hub.MonitorHub
 	rooms    *room.Store
 }
 
@@ -67,6 +68,7 @@ func main() {
 		tasks:    task.NewPGStore(db),
 		projects: project.NewPGStore(db),
 		hub:      h,
+		monitor:  hub.NewMonitorHub(),
 		rooms:    room.NewStore(db.Mongo),
 	}
 
@@ -76,10 +78,12 @@ func main() {
 			_ = s.agents.UpdateCapabilities(context.Background(), agentID, p.Capabilities)
 		}
 		s.agents.Heartbeat(context.Background(), agentID)
+		s.monitor.Broadcast("agent.online", map[string]interface{}{"agent_id": agentID})
 	})
 	// Wire up WS HEARTBEAT → update last_seen in DB
 	h.SetOnHeartbeat(func(agentID string) {
 		s.agents.Heartbeat(context.Background(), agentID)
+		s.monitor.Broadcast("agent.heartbeat", map[string]interface{}{"agent_id": agentID})
 	})
 	// Wire up WS TASK_UPDATE → transition task state
 	h.SetOnTaskUpdate(func(agentID string, p protocol.TaskUpdatePayload) {
@@ -88,14 +92,17 @@ func main() {
 		switch p.Status {
 		case "running":
 			s.tasks.Start(ctx, p.TaskID)
+			s.monitor.Broadcast("task.update", map[string]interface{}{"task_id": p.TaskID, "status": "running", "agent_id": agentID})
 		case "done":
 			if s.tasks.Complete(ctx, p.TaskID, p.Message) {
 				s.agents.SetOnline(ctx, agentID)
 				s.hub.Broadcast(hub.Message{Type: hub.MsgTypeBroadcast, Payload: map[string]interface{}{"event": "task.done", "task_id": p.TaskID}})
+				s.monitor.Broadcast("task.update", map[string]interface{}{"task_id": p.TaskID, "status": "done", "agent_id": agentID})
 			}
 		case "failed":
 			if s.tasks.Fail(ctx, p.TaskID, p.Message) {
 				s.agents.SetOnline(ctx, agentID)
+				s.monitor.Broadcast("task.update", map[string]interface{}{"task_id": p.TaskID, "status": "failed", "agent_id": agentID})
 			}
 		}
 	})
@@ -108,6 +115,7 @@ func main() {
 				s.agents.SetOnline(ctx, agentID)
 				t, _ := s.tasks.Get(ctx, p.TaskID)
 				s.hub.Broadcast(hub.Message{Type: hub.MsgTypeBroadcast, Payload: map[string]interface{}{"event": "task.done", "task": t}})
+				s.monitor.Broadcast("task.result", map[string]interface{}{"task_id": p.TaskID, "status": "done", "agent_id": agentID, "task": t})
 				if t != nil && t.ReportChannel != nil && t.ReportChannel.WebhookURL != "" {
 					go func() {
 						evt := notify.TaskEvent{
@@ -131,6 +139,7 @@ func main() {
 			if s.tasks.Fail(ctx, p.TaskID, p.Error) {
 				s.agents.SetOnline(ctx, agentID)
 				t, _ := s.tasks.Get(ctx, p.TaskID)
+				s.monitor.Broadcast("task.result", map[string]interface{}{"task_id": p.TaskID, "status": "failed", "agent_id": agentID, "task": t})
 				if t != nil && t.ReportChannel != nil && t.ReportChannel.WebhookURL != "" {
 					go func() {
 						evt := notify.TaskEvent{
@@ -235,6 +244,9 @@ func main() {
 		r.Get("/rooms", s.listRooms)
 		r.Post("/rooms/{room_id}/messages", s.postRoomMessage)
 		r.Get("/rooms/{room_id}/messages", s.listRoomMessages)
+
+		// Monitor WebSocket — real-time push events to browser dashboards
+		r.Get("/ws", s.monitorWsHandler)
 	})
 
 	addr := getenv("ADDR", ":8080")
@@ -474,8 +486,7 @@ func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 		s.agents.SetOnline(r.Context(), t.AssignedAgentID)
 	}
 	s.hub.Broadcast(hub.Message{Type: hub.MsgTypeBroadcast, Payload: map[string]interface{}{"event": "task.done", "task": t}})
-
-	// Fire outgoing webhook if report_channel is configured
+	s.monitor.Broadcast("task.result", map[string]interface{}{"task_id": id, "status": "done", "task": t})
 	if t != nil && t.ReportChannel != nil && t.ReportChannel.WebhookURL != "" {
 		go func() {
 			evt := notify.TaskEvent{
@@ -516,6 +527,7 @@ func (s *Server) failTask(w http.ResponseWriter, r *http.Request) {
 	if t != nil && t.AssignedAgentID != "" {
 		s.agents.SetOnline(r.Context(), t.AssignedAgentID)
 	}
+	s.monitor.Broadcast("task.result", map[string]interface{}{"task_id": id, "status": "failed", "task": t})
 
 	// Fire outgoing webhook if report_channel is configured
 	if t != nil && t.ReportChannel != nil && t.ReportChannel.WebhookURL != "" {
@@ -638,6 +650,20 @@ func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
 			s.hub.Broadcast(msg)
 		}
 	})
+}
+
+// monitorWsHandler upgrades authenticated browser/monitor clients to WebSocket
+// and streams real-time events (room.message, task.update, agent.heartbeat, etc.).
+// Auth: X-API-Key (same as REST API) OR ?api_key=<key> query param for browser clients.
+func (s *Server) monitorWsHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	client := s.monitor.Subscribe(conn)
+	log.Printf("monitor: client %s connected", client.GetID())
+	s.monitor.ReadLoop(client)
+	log.Printf("monitor: client %s disconnected", client.GetID())
 }
 
 // ─── User Handlers ─────────────────────────────────────────────────────────
@@ -794,6 +820,8 @@ func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Push real-time event to monitor WebSocket clients
+	s.monitor.Broadcast("room.message", msg)
 	jsonResp(w, http.StatusCreated, msg)
 }
 
