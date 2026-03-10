@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -18,7 +19,16 @@ type DB struct {
 }
 
 func Connect(ctx context.Context, pgDSN, mongoURI, mongoDBName string) (*DB, error) {
-	pg, err := pgxpool.New(ctx, pgDSN)
+	cfg, err := pgxpool.ParseConfig(pgDSN)
+	if err != nil {
+		return nil, fmt.Errorf("pg parse config: %w", err)
+	}
+	// Disable prepared statements — required when using pgBouncer/Supabase
+	// pooler in transaction mode (port 6543). Prepared statements don't
+	// survive across pooled connections and cause "prepared statement does not
+	// exist" errors.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	pg, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("pg connect: %w", err)
 	}
