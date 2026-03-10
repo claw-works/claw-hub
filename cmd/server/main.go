@@ -225,6 +225,7 @@ func main() {
 		r.Post("/projects", s.createProject)
 		r.Get("/projects", s.listProjects)
 		r.Get("/projects/{id}", s.getProject)
+		r.Delete("/projects/{id}", s.deleteProject)
 		r.Get("/projects/{id}/tasks", s.listProjectTasks)
 
 		// Task routes
@@ -815,6 +816,15 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, p)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := s.projects.DeleteProject(r.Context(), id); err != nil {
+		http.Error(w, "delete project failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listProjectTasks(w http.ResponseWriter, r *http.Request) {

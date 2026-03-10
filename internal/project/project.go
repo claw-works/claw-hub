@@ -123,6 +123,14 @@ func (s *PGStore) GetProject(ctx context.Context, id string) (*Project, error) {
 	return p, nil
 }
 
+func (s *PGStore) DeleteProject(ctx context.Context, id string) error {
+	_, err := s.db.PG.Exec(ctx, `DELETE FROM projects WHERE id=$1`, id)
+	if err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	return nil
+}
+
 func (s *PGStore) ListProjects(ctx context.Context, userID string) ([]*Project, error) {
 	var rows interface {
 		Next() bool
