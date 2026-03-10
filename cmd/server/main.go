@@ -153,10 +153,10 @@ func main() {
 		}
 	})
 
-	// Background: mark stale agents offline every 30s
+	// Background: mark stale agents offline every 60s
 	go func() {
-		for range time.Tick(30 * time.Second) {
-			s.agents.MarkOfflineStale(ctx, 60*time.Second)
+		for range time.Tick(60 * time.Second) {
+			s.agents.MarkOfflineStale(ctx, 3*time.Minute)
 		}
 	}()
 
