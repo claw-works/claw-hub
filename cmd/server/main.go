@@ -266,6 +266,8 @@ func main() {
 		r.Get("/rooms", s.listRooms)
 		r.Post("/rooms/{room_id}/messages", s.postRoomMessage)
 		r.Get("/rooms/{room_id}/messages", s.listRoomMessages)
+		r.Get("/rooms/{room_id}/messages/search", s.searchRoomMessages)
+		r.Get("/messages/search", s.searchDMMessages)
 		// Room chat WebSocket — real-time push for group chat
 		r.Get("/rooms/{room_id}/ws", s.roomChatWsHandler)
 
@@ -1016,6 +1018,54 @@ func (s *Server) listRoomMessages(w http.ResponseWriter, r *http.Request) {
 		msgs = []*room.Message{}
 	}
 	jsonResp(w, http.StatusOK, msgs)
+}
+
+// searchRoomMessages searches room messages by keyword.
+func (s *Server) searchRoomMessages(w http.ResponseWriter, r *http.Request) {
+	if s.rooms == nil {
+		http.Error(w, "rooms unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "room_id")
+	if roomID != room.DefaultRoomID(user.ID) {
+		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query().Get("q")
+	limit, offset := 20, 0
+	fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+	fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+
+	msgs, total, err := s.rooms.Search(r.Context(), roomID, q, limit, offset)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if msgs == nil {
+		msgs = []*room.Message{}
+	}
+	jsonResp(w, http.StatusOK, map[string]interface{}{"items": msgs, "total": total})
+}
+
+// searchDMMessages searches DM messages by keyword between two agents.
+func (s *Server) searchDMMessages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	agentA := r.URL.Query().Get("agent_a")
+	agentB := r.URL.Query().Get("agent_b")
+	limit, offset := 20, 0
+	fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+	fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+
+	msgs, total := s.hub.SearchDM(agentA, agentB, q, limit, offset)
+	if msgs == nil {
+		msgs = []hub.InboxMessage{}
+	}
+	jsonResp(w, http.StatusOK, map[string]interface{}{"items": msgs, "total": total})
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

@@ -236,3 +236,50 @@ func (m *MongoInbox) PopOffline(agentID string) []Message {
 	)
 	return msgs
 }
+
+// SearchDM returns DM messages between two agents matching keyword, sorted newest-first.
+func (m *MongoInbox) SearchDM(agentA, agentB, keyword string, limit, offset int) ([]InboxMessage, int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	filter := bson.M{
+		"$or": bson.A{
+			bson.M{"to_agent_id": agentA, "from_agent_id": agentB},
+			bson.M{"to_agent_id": agentB, "from_agent_id": agentA},
+		},
+		"payload.text": bson.M{"$regex": keyword, "$options": "i"},
+	}
+	total, _ := m.dmColl.CountDocuments(ctx, filter)
+
+	opts := mongoOpts.Find().
+		SetSort(bson.M{"created_at": -1}).
+		SetLimit(int64(limit)).
+		SetSkip(int64(offset))
+
+	cur, err := m.dmColl.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, total
+	}
+	defer cur.Close(ctx)
+
+	var docs []inboxDoc
+	if err := cur.All(ctx, &docs); err != nil {
+		return nil, total
+	}
+	msgs := make([]InboxMessage, len(docs))
+	for i, d := range docs {
+		msgs[i] = InboxMessage{
+			ID:          d.ID,
+			ToAgentID:   d.ToAgentID,
+			FromAgentID: d.FromAgentID,
+			Type:        d.Type,
+			Payload:     d.Payload,
+			CreatedAt:   d.CreatedAt,
+			Delivered:   d.Delivered,
+		}
+	}
+	return msgs, total
+}

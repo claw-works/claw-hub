@@ -119,3 +119,38 @@ func (s *Store) List(ctx context.Context, roomID string, limit int, beforeID str
 	}
 	return msgs, nil
 }
+
+// Search returns messages matching keyword in content, sorted newest-first.
+func (s *Store) Search(ctx context.Context, roomID, keyword string, limit, offset int) ([]*Message, int64, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	filter := bson.M{
+		"room_id": roomID,
+		"content": bson.M{"$regex": keyword, "$options": "i"},
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	total, err := s.coll.CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	opts := mongoOpts.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetLimit(int64(limit)).
+		SetSkip(int64(offset))
+
+	cur, err := s.coll.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cur.Close(ctx)
+
+	var msgs []*Message
+	if err := cur.All(ctx, &msgs); err != nil {
+		return nil, 0, err
+	}
+	return msgs, total, nil
+}

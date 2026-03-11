@@ -45,6 +45,7 @@ type inboxBackend interface {
 	PopOffline(agentID string) []Message
 	ListMessages(agentID string, fromAgentID string, limit int) []InboxMessage
 	ListConversation(agentA, agentB string, limit int) []InboxMessage
+	SearchDM(agentA, agentB, keyword string, limit, offset int) ([]InboxMessage, int64)
 }
 
 type nopInbox struct{}
@@ -54,6 +55,7 @@ func (nopInbox) SaveDM(_ string, _ Message)                                    {
 func (nopInbox) PopOffline(_ string) []Message                                 { return nil }
 func (nopInbox) ListMessages(_ string, _ string, _ int) []InboxMessage         { return nil }
 func (nopInbox) ListConversation(_ string, _ string, _ int) []InboxMessage     { return nil }
+func (nopInbox) SearchDM(_, _, _ string, _, _ int) ([]InboxMessage, int64)     { return nil, 0 }
 
 // OnRegisterFunc is called when a REGISTER message arrives over WS.
 // The hub calls this so main.go can update the agent DB record.
@@ -118,6 +120,11 @@ func (h *Hub) ListAgentMessages(agentID string, fromAgentID string, limit int) [
 // ListConversation returns bidirectional message history between two agents.
 func (h *Hub) ListConversation(agentA, agentB string, limit int) []InboxMessage {
 	return h.inbox.ListConversation(agentA, agentB, limit)
+}
+
+// SearchDM searches DM messages between two agents by keyword.
+func (h *Hub) SearchDM(agentA, agentB, keyword string, limit, offset int) ([]InboxMessage, int64) {
+	return h.inbox.SearchDM(agentA, agentB, keyword, limit, offset)
 }
 
 func (h *Hub) Register(agentID string, conn *websocket.Conn) *Client {
