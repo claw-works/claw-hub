@@ -50,8 +50,11 @@ func (s *PGStore) Save(ctx context.Context, projectID, date, summary string) (*D
 }
 
 func (s *PGStore) ListByProject(ctx context.Context, projectID string, limit int) ([]*DailyReport, error) {
-	if limit <= 0 || limit > 30 {
-		limit = 7
+	if limit <= 0 {
+		limit = 30
+	}
+	if limit > 365 {
+		limit = 365
 	}
 	rows, err := s.db.PG.Query(ctx,
 		`SELECT id, project_id, date, summary, created_at

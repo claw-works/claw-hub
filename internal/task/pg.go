@@ -74,6 +74,8 @@ type ListFilter struct {
 	Status     string // "" = all, "active" = not done/failed, or exact status
 	ProjectID  string // filter by project
 	AssignedTo string // filter by agent id
+	Limit      int    // 0 = no limit; max 500
+	Offset     int    // pagination offset
 }
 
 func (s *PGStore) List(ctx context.Context, statusFilter string) ([]*Task, error) {
@@ -111,6 +113,14 @@ func (s *PGStore) ListFiltered(ctx context.Context, f ListFilter) ([]*Task, erro
 	}
 
 	base += " ORDER BY priority DESC, created_at ASC"
+
+	if f.Limit > 0 {
+		if f.Limit > 500 {
+			f.Limit = 500
+		}
+		base += fmt.Sprintf(" LIMIT $%d OFFSET $%d", n, n+1)
+		args = append(args, f.Limit, f.Offset)
+	}
 
 	rows, err := s.db.PG.Query(ctx, base, args...)
 	if err != nil {

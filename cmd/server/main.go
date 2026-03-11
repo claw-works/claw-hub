@@ -457,6 +457,12 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		AssignedTo: r.URL.Query().Get("assigned_to"),
 		ProjectID:  r.URL.Query().Get("project_id"),
 	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &f.Limit)
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &f.Offset)
+	}
 	tasks, err := s.tasks.ListFiltered(r.Context(), f)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1026,7 +1032,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) listProjectReports(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "id")
-	reports, err := s.reports.ListByProject(r.Context(), projectID, 7)
+	limit := 30
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	reports, err := s.reports.ListByProject(r.Context(), projectID, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
