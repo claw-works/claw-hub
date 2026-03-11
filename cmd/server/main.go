@@ -253,6 +253,7 @@ func main() {
 		r.Get("/tasks/{id}", s.getTask)
 		r.Get("/tasks/{id}/events", s.getTaskEvents)
 		r.Patch("/tasks/{id}/claim", s.claimTask)
+		r.Patch("/tasks/{id}/start", s.startTask)
 		r.Patch("/tasks/{id}/complete", s.completeTask)
 		r.Patch("/tasks/{id}/fail", s.failTask)
 		r.Delete("/tasks/{id}", s.deleteTask)
@@ -505,6 +506,16 @@ func (s *Server) claimTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.tasks.Claim(r.Context(), id, req.AgentID) {
 		http.Error(w, "cannot claim task", http.StatusConflict)
+		return
+	}
+	t, _ := s.tasks.Get(r.Context(), id)
+	jsonResp(w, http.StatusOK, t)
+}
+
+func (s *Server) startTask(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.tasks.Start(r.Context(), id) {
+		http.Error(w, "cannot start task", http.StatusConflict)
 		return
 	}
 	t, _ := s.tasks.Get(r.Context(), id)
