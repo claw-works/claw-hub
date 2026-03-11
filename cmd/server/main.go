@@ -20,6 +20,7 @@ import (
 	"github.com/claw-works/pincer/internal/hub"
 	"github.com/claw-works/pincer/internal/notify"
 	"github.com/claw-works/pincer/internal/project"
+	"github.com/claw-works/pincer/internal/report"
 	"github.com/claw-works/pincer/internal/room"
 	"github.com/claw-works/pincer/internal/store"
 	"github.com/claw-works/pincer/internal/task"
@@ -34,6 +35,7 @@ type Server struct {
 	agents   *agent.PGRegistry
 	tasks    *task.PGStore
 	projects *project.PGStore
+	reports  *report.PGStore
 	hub      *hub.Hub
 	monitor  *hub.MonitorHub
 	roomHub  *hub.RoomHub
@@ -72,6 +74,7 @@ func main() {
 		agents:   agent.NewPGRegistry(db),
 		tasks:    task.NewPGStore(db),
 		projects: project.NewPGStore(db),
+		reports:  report.NewPGStore(db),
 		hub:      h,
 		monitor:  hub.NewMonitorHub(),
 		roomHub:  hub.NewRoomHub(),
@@ -82,6 +85,11 @@ func main() {
 			return nil
 		}(),
 	}
+
+	// Start daily report scheduler (fires at 15:30 UTC = 23:30 CST)
+	go report.ScheduleDaily(ctx, func(ctx context.Context) {
+		s.generateDailyReports(ctx)
+	})
 
 	// Wire up WS REGISTER → update agent capabilities + last_seen in DB
 	h.SetOnRegister(func(agentID string, p protocol.RegisterPayload) {
@@ -236,6 +244,7 @@ func main() {
 		r.Get("/projects/{id}", s.getProject)
 		r.Patch("/projects/{id}", s.updateProject)
 		r.Get("/projects/{id}/tasks", s.listProjectTasks)
+		r.Get("/projects/{id}/reports", s.listProjectReports)
 
 		// Task routes
 		r.Post("/tasks", s.createTask)
@@ -1011,4 +1020,72 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ─── Report Handlers ────────────────────────────────────────────────────────
+
+func (s *Server) listProjectReports(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	reports, err := s.reports.ListByProject(r.Context(), projectID, 7)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if reports == nil {
+		reports = []*report.DailyReport{}
+	}
+	jsonResp(w, http.StatusOK, reports)
+}
+
+// generateDailyReports runs at 15:30 UTC and posts room summaries for all projects.
+func (s *Server) generateDailyReports(ctx context.Context) {
+	if s.rooms == nil {
+		log.Println("daily-report: rooms unavailable, skipping")
+		return
+	}
+
+	cst := time.FixedZone("CST", 8*3600)
+	date := time.Now().In(cst).Format("2006-01-02")
+
+	projects, err := s.projects.ListProjects(ctx, "")
+	if err != nil {
+		log.Printf("daily-report: list projects error: %v", err)
+		return
+	}
+
+	for _, p := range projects {
+		tasks, err := s.tasks.ListFiltered(ctx, task.ListFilter{ProjectID: p.ID})
+		if err != nil {
+			log.Printf("daily-report: list tasks for %s error: %v", p.ID, err)
+			continue
+		}
+
+		counts := map[string]int{}
+		for _, t := range tasks {
+			counts[string(t.Status)]++
+		}
+
+		// Get yesterday's summary
+		prevSummary := ""
+		if prev, err := s.reports.GetLatest(ctx, p.ID); err == nil && prev.Date != date {
+			prevSummary = prev.Summary
+		}
+
+		summary := report.FormatReport(p.Name, date, counts, len(tasks), prevSummary)
+
+		// Save to DB
+		if _, err := s.reports.Save(ctx, p.ID, date, summary); err != nil {
+			log.Printf("daily-report: save error for %s: %v", p.ID, err)
+		}
+
+		// Post to room (use user_id from project)
+		roomID := "user:" + p.UserID + ":default"
+		if _, err := s.rooms.Post(ctx, roomID, "hub", summary, nil); err != nil {
+			log.Printf("daily-report: post room error for %s: %v", p.ID, err)
+		} else {
+			s.monitor.Broadcast("room.message", map[string]interface{}{"room_id": roomID, "content": summary})
+			s.roomHub.BroadcastToRoom(roomID, "room.message", map[string]interface{}{"room_id": roomID, "content": summary})
+			log.Printf("daily-report: posted for project %s (%s)", p.Name, date)
+		}
+	}
 }

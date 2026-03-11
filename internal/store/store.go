@@ -115,6 +115,15 @@ func (db *DB) Migrate(ctx context.Context) error {
 		ALTER TABLE projects ADD COLUMN IF NOT EXISTS description         TEXT NOT NULL DEFAULT '';
 		ALTER TABLE projects ADD COLUMN IF NOT EXISTS overview            TEXT NOT NULL DEFAULT '';
 
+		CREATE TABLE IF NOT EXISTS daily_reports (
+			id         TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL REFERENCES projects(id),
+			date       TEXT NOT NULL,
+			summary    TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (project_id, date)
+		);
+
 		-- Indexes for common queries
 		CREATE INDEX IF NOT EXISTS idx_tasks_project_id   ON tasks(project_id);
 		CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to  ON tasks(assigned_agent_id);
