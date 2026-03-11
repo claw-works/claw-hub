@@ -19,10 +19,13 @@ type User struct {
 
 // Project belongs to a User and groups Tasks and Agents.
 type Project struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	Repo        string    `json:"repo"`
+	Description string    `json:"description"`
+	Overview    string    `json:"overview"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // PGStore handles User and Project persistence in PostgreSQL.
@@ -95,16 +98,19 @@ func (s *PGStore) ListUsers(ctx context.Context) ([]*User, error) {
 
 // ── Project ───────────────────────────────────────────────────────────────────
 
-func (s *PGStore) CreateProject(ctx context.Context, userID, name string) (*Project, error) {
+func (s *PGStore) CreateProject(ctx context.Context, userID, name, repo, description, overview string) (*Project, error) {
 	p := &Project{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Name:      name,
-		CreatedAt: time.Now(),
+		ID:          uuid.New().String(),
+		UserID:      userID,
+		Name:        name,
+		Repo:        repo,
+		Description: description,
+		Overview:    overview,
+		CreatedAt:   time.Now(),
 	}
 	_, err := s.db.PG.Exec(ctx,
-		`INSERT INTO projects (id, user_id, name, created_at) VALUES ($1,$2,$3,$4)`,
-		p.ID, p.UserID, p.Name, p.CreatedAt,
+		`INSERT INTO projects (id, user_id, name, repo, description, overview, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		p.ID, p.UserID, p.Name, p.Repo, p.Description, p.Overview, p.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
@@ -115,8 +121,8 @@ func (s *PGStore) CreateProject(ctx context.Context, userID, name string) (*Proj
 func (s *PGStore) GetProject(ctx context.Context, id string) (*Project, error) {
 	p := &Project{}
 	err := s.db.PG.QueryRow(ctx,
-		`SELECT id, user_id, name, created_at FROM projects WHERE id=$1`, id,
-	).Scan(&p.ID, &p.UserID, &p.Name, &p.CreatedAt)
+		`SELECT id, user_id, name, repo, description, overview, created_at FROM projects WHERE id=$1`, id,
+	).Scan(&p.ID, &p.UserID, &p.Name, &p.Repo, &p.Description, &p.Overview, &p.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get project: %w", err)
 	}
@@ -133,10 +139,10 @@ func (s *PGStore) ListProjects(ctx context.Context, userID string) ([]*Project, 
 	var err error
 	if userID != "" {
 		rows, err = s.db.PG.Query(ctx,
-			`SELECT id, user_id, name, created_at FROM projects WHERE user_id=$1 ORDER BY created_at DESC`, userID)
+			`SELECT id, user_id, name, repo, description, overview, created_at FROM projects WHERE user_id=$1 ORDER BY created_at DESC`, userID)
 	} else {
 		rows, err = s.db.PG.Query(ctx,
-			`SELECT id, user_id, name, created_at FROM projects ORDER BY created_at DESC`)
+			`SELECT id, user_id, name, repo, description, overview, created_at FROM projects ORDER BY created_at DESC`)
 	}
 	if err != nil {
 		return nil, err
@@ -145,10 +151,21 @@ func (s *PGStore) ListProjects(ctx context.Context, userID string) ([]*Project, 
 	var projects []*Project
 	for rows.Next() {
 		p := &Project{}
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Repo, &p.Description, &p.Overview, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
 	}
 	return projects, rows.Err()
+}
+
+func (s *PGStore) UpdateProject(ctx context.Context, id, repo, description, overview string) (*Project, error) {
+	_, err := s.db.PG.Exec(ctx,
+		`UPDATE projects SET repo=$2, description=$3, overview=$4 WHERE id=$1`,
+		id, repo, description, overview,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update project: %w", err)
+	}
+	return s.GetProject(ctx, id)
 }

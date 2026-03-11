@@ -62,7 +62,11 @@ func main() {
 	}
 
 	h := hub.New()
-	h.SetInbox(hub.NewMongoInbox(db.Mongo))
+	if db.Mongo != nil {
+		h.SetInbox(hub.NewMongoInbox(db.Mongo))
+	} else {
+		log.Println("hub: MongoDB not available, inbox disabled (nopInbox)")
+	}
 
 	s := &Server{
 		agents:   agent.NewPGRegistry(db),
@@ -71,7 +75,12 @@ func main() {
 		hub:      h,
 		monitor:  hub.NewMonitorHub(),
 		roomHub:  hub.NewRoomHub(),
-		rooms:    room.NewStore(db.Mongo),
+		rooms: func() *room.Store {
+			if db.Mongo != nil {
+				return room.NewStore(db.Mongo)
+			}
+			return nil
+		}(),
 	}
 
 	// Wire up WS REGISTER → update agent capabilities + last_seen in DB
@@ -225,6 +234,7 @@ func main() {
 		r.Post("/projects", s.createProject)
 		r.Get("/projects", s.listProjects)
 		r.Get("/projects/{id}", s.getProject)
+		r.Patch("/projects/{id}", s.updateProject)
 		r.Get("/projects/{id}/tasks", s.listProjectTasks)
 
 		// Task routes
@@ -776,13 +786,16 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name        string `json:"name"`
+		Repo        string `json:"repo"`
+		Description string `json:"description"`
+		Overview    string `json:"overview"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
 		return
 	}
-	p, err := s.projects.CreateProject(r.Context(), user.ID, req.Name)
+	p, err := s.projects.CreateProject(r.Context(), user.ID, req.Name, req.Repo, req.Description, req.Overview)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -812,6 +825,43 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	p, err := s.projects.GetProject(r.Context(), id)
 	if err != nil {
 		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	jsonResp(w, http.StatusOK, p)
+}
+
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	// Fetch existing first
+	existing, err := s.projects.GetProject(r.Context(), id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	var req struct {
+		Repo        *string `json:"repo"`
+		Description *string `json:"description"`
+		Overview    *string `json:"overview"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	repo := existing.Repo
+	description := existing.Description
+	overview := existing.Overview
+	if req.Repo != nil {
+		repo = *req.Repo
+	}
+	if req.Description != nil {
+		description = *req.Description
+	}
+	if req.Overview != nil {
+		overview = *req.Overview
+	}
+	p, err := s.projects.UpdateProject(r.Context(), id, repo, description, overview)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResp(w, http.StatusOK, p)
@@ -849,6 +899,10 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 
 // postRoomMessage posts a message to a room.
 func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
+	if s.rooms == nil {
+		http.Error(w, "rooms unavailable: MongoDB not configured", http.StatusServiceUnavailable)
+		return
+	}
 	user := auth.FromContext(r.Context())
 	if user == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -891,6 +945,10 @@ func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
 
 // listRoomMessages returns recent messages from a room.
 func (s *Server) listRoomMessages(w http.ResponseWriter, r *http.Request) {
+	if s.rooms == nil {
+		http.Error(w, "rooms unavailable: MongoDB not configured", http.StatusServiceUnavailable)
+		return
+	}
 	user := auth.FromContext(r.Context())
 	if user == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

@@ -37,17 +37,25 @@ func Connect(ctx context.Context, pgDSN, mongoURI, mongoDBName string) (*DB, err
 	}
 	log.Println("store: PostgreSQL connected")
 
-	mc, err := mongo.Connect(mongoOpts.Client().ApplyURI(mongoURI).
-		SetConnectTimeout(10 * time.Second))
-	if err != nil {
-		return nil, fmt.Errorf("mongo connect: %w", err)
+	// MongoDB is optional — if MONGO_URI is empty or unreachable, inbox/rooms
+	// fall back to in-memory nop implementations.
+	var mongoDB *mongo.Database
+	if mongoURI != "" {
+		mc, merr := mongo.Connect(mongoOpts.Client().ApplyURI(mongoURI).
+			SetConnectTimeout(10 * time.Second))
+		if merr != nil {
+			log.Printf("store: MongoDB connect skipped (%v) — inbox/rooms disabled", merr)
+		} else if merr = mc.Ping(ctx, nil); merr != nil {
+			log.Printf("store: MongoDB ping failed (%v) — inbox/rooms disabled", merr)
+		} else {
+			mongoDB = mc.Database(mongoDBName)
+			log.Println("store: MongoDB connected")
+		}
+	} else {
+		log.Println("store: MONGO_URI not set — inbox/rooms running without persistence")
 	}
-	if err := mc.Ping(ctx, nil); err != nil {
-		return nil, fmt.Errorf("mongo ping: %w", err)
-	}
-	log.Println("store: MongoDB connected")
 
-	return &DB{PG: pg, Mongo: mc.Database(mongoDBName)}, nil
+	return &DB{PG: pg, Mongo: mongoDB}, nil
 }
 
 // Migrate runs idempotent DDL for PostgreSQL.
@@ -96,11 +104,14 @@ func (db *DB) Migrate(ctx context.Context) error {
 		);
 
 		-- Idempotent column additions
-		ALTER TABLE tasks   ADD COLUMN IF NOT EXISTS report_channel JSONB;
-		ALTER TABLE tasks   ADD COLUMN IF NOT EXISTS assigned_at    TIMESTAMPTZ;
-		ALTER TABLE tasks   ADD COLUMN IF NOT EXISTS project_id     TEXT REFERENCES projects(id);
-		ALTER TABLE agents  ADD COLUMN IF NOT EXISTS user_id        TEXT REFERENCES users(id);
-		ALTER TABLE agents  ADD COLUMN IF NOT EXISTS type           TEXT NOT NULL DEFAULT 'agent';
+		ALTER TABLE tasks    ADD COLUMN IF NOT EXISTS report_channel JSONB;
+		ALTER TABLE tasks    ADD COLUMN IF NOT EXISTS assigned_at    TIMESTAMPTZ;
+		ALTER TABLE tasks    ADD COLUMN IF NOT EXISTS project_id     TEXT REFERENCES projects(id);
+		ALTER TABLE agents   ADD COLUMN IF NOT EXISTS user_id        TEXT REFERENCES users(id);
+		ALTER TABLE agents   ADD COLUMN IF NOT EXISTS type           TEXT NOT NULL DEFAULT 'agent';
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS repo           TEXT NOT NULL DEFAULT '';
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS description    TEXT NOT NULL DEFAULT '';
+		ALTER TABLE projects ADD COLUMN IF NOT EXISTS overview       TEXT NOT NULL DEFAULT '';
 
 		-- Indexes for common queries
 		CREATE INDEX IF NOT EXISTS idx_tasks_project_id   ON tasks(project_id);
