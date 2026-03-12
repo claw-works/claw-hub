@@ -1131,6 +1131,19 @@ func (s *Server) generateDailyReports(ctx context.Context) {
 			continue
 		}
 
+		// Only generate report if there was activity today (CST)
+		hasActivity := false
+		for _, t := range tasks {
+			if t.UpdatedAt.In(cst).Format("2006-01-02") == date || t.CreatedAt.In(cst).Format("2006-01-02") == date {
+				hasActivity = true
+				break
+			}
+		}
+		if !hasActivity {
+			log.Printf("daily-report: no activity today for project %s, skipping", p.Name)
+			continue
+		}
+
 		counts := map[string]int{}
 		for _, t := range tasks {
 			counts[string(t.Status)]++
