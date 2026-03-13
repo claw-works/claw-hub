@@ -115,6 +115,25 @@ func (db *DB) Migrate(ctx context.Context) error {
 		ALTER TABLE projects ADD COLUMN IF NOT EXISTS repo                TEXT NOT NULL DEFAULT '';
 		ALTER TABLE projects ADD COLUMN IF NOT EXISTS description         TEXT NOT NULL DEFAULT '';
 		ALTER TABLE projects ADD COLUMN IF NOT EXISTS overview            TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users    ADD COLUMN IF NOT EXISTS is_human            BOOLEAN NOT NULL DEFAULT false;
+		ALTER TABLE users    ADD COLUMN IF NOT EXISTS updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+		-- Deduplicate users by name: keep the most recently updated record, delete others.
+		-- Safe to run multiple times (idempotent). Only deletes rows with no dependent projects/agents.
+		DELETE FROM users
+		WHERE id IN (
+			SELECT id FROM (
+				SELECT id,
+					ROW_NUMBER() OVER (
+						PARTITION BY name
+						ORDER BY updated_at DESC, created_at DESC
+					) AS rn
+				FROM users
+			) sub
+			WHERE rn > 1
+		)
+		AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.user_id = users.id)
+		AND NOT EXISTS (SELECT 1 FROM agents  a WHERE a.user_id = users.id);
 
 		CREATE TABLE IF NOT EXISTS daily_reports (
 			id         TEXT PRIMARY KEY,

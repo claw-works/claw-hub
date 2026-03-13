@@ -228,6 +228,7 @@ func main() {
 
 		// Auth routes
 		r.Post("/auth/reset-key", s.resetAPIKey)
+		r.Post("/auth/register-human", s.registerHuman)
 
 		// User routes
 		r.Get("/users", s.listUsers)
@@ -877,6 +878,27 @@ func (s *Server) resetAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, map[string]string{"api_key": newKey})
+}
+
+func (s *Server) registerHuman(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
+	}
+	u, err := s.projects.UpsertHumanByName(r.Context(), user.ID, req.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, u)
 }
 
 // ─── Project Handlers ───────────────────────────────────────────────────────

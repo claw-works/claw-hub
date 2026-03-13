@@ -14,7 +14,9 @@ type User struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	APIKey    string    `json:"api_key,omitempty"`
+	IsHuman   bool      `json:"is_human"`
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Project belongs to a User and groups Tasks and Agents.
@@ -59,8 +61,8 @@ func (s *PGStore) CreateUser(ctx context.Context, name string) (*User, error) {
 func (s *PGStore) GetUser(ctx context.Context, id string) (*User, error) {
 	u := &User{}
 	err := s.db.PG.QueryRow(ctx,
-		`SELECT id, name, api_key, created_at FROM users WHERE id=$1`, id,
-	).Scan(&u.ID, &u.Name, &u.APIKey, &u.CreatedAt)
+		`SELECT id, name, api_key, is_human, created_at, updated_at FROM users WHERE id=$1`, id,
+	).Scan(&u.ID, &u.Name, &u.APIKey, &u.IsHuman, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
@@ -70,12 +72,20 @@ func (s *PGStore) GetUser(ctx context.Context, id string) (*User, error) {
 func (s *PGStore) GetUserByAPIKey(ctx context.Context, apiKey string) (*User, error) {
 	u := &User{}
 	err := s.db.PG.QueryRow(ctx,
-		`SELECT id, name, api_key, created_at FROM users WHERE api_key=$1`, apiKey,
-	).Scan(&u.ID, &u.Name, &u.APIKey, &u.CreatedAt)
+		`SELECT id, name, api_key, is_human, created_at, updated_at FROM users WHERE api_key=$1`, apiKey,
+	).Scan(&u.ID, &u.Name, &u.APIKey, &u.IsHuman, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get user by api key: %w", err)
 	}
 	return u, nil
+}
+
+func (s *PGStore) SetIsHuman(ctx context.Context, userID string, isHuman bool) error {
+	_, err := s.db.PG.Exec(ctx,
+		`UPDATE users SET is_human = $1, updated_at = NOW() WHERE id = $2`,
+		isHuman, userID,
+	)
+	return err
 }
 
 func (s *PGStore) ResetAPIKey(ctx context.Context, userID string) (string, error) {
@@ -92,7 +102,7 @@ func (s *PGStore) ResetAPIKey(ctx context.Context, userID string) (string, error
 
 func (s *PGStore) ListUsers(ctx context.Context) ([]*User, error) {
 	rows, err := s.db.PG.Query(ctx,
-		`SELECT id, name, api_key, created_at FROM users ORDER BY created_at DESC`)
+		`SELECT id, name, api_key, is_human, created_at, updated_at FROM users ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -100,12 +110,72 @@ func (s *PGStore) ListUsers(ctx context.Context) ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		u := &User{}
-		if err := rows.Scan(&u.ID, &u.Name, &u.APIKey, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.APIKey, &u.IsHuman, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
 	}
 	return users, rows.Err()
+}
+
+// UpsertHumanByName registers a human identity for the current user.
+// If a user with the given name already exists (and is different from the current user),
+// that record's api_key is updated to the current user's key and is_human is set true;
+// the current (anonymous) user record is then deleted.
+// Otherwise the current user record is updated with the provided name and is_human = true.
+func (s *PGStore) UpsertHumanByName(ctx context.Context, currentUserID, name string) (*User, error) {
+	tx, err := s.db.PG.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("upsert human: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Get current user's API key.
+	var currentAPIKey string
+	if err := tx.QueryRow(ctx,
+		`SELECT api_key FROM users WHERE id = $1`, currentUserID,
+	).Scan(&currentAPIKey); err != nil {
+		return nil, fmt.Errorf("upsert human: get current user: %w", err)
+	}
+
+	// Check for an existing user with this name (different record).
+	var existingID string
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM users WHERE name = $1 AND id != $2`, name, currentUserID,
+	).Scan(&existingID)
+
+	var targetID string
+	if err == nil {
+		// Existing record found: migrate current API key to it and mark as human.
+		if _, err := tx.Exec(ctx,
+			`UPDATE users SET api_key = $1, is_human = true, updated_at = NOW() WHERE id = $2`,
+			currentAPIKey, existingID,
+		); err != nil {
+			return nil, fmt.Errorf("upsert human: update existing: %w", err)
+		}
+		// Delete the current (anonymous) record.
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM users WHERE id = $1`, currentUserID,
+		); err != nil {
+			return nil, fmt.Errorf("upsert human: delete current: %w", err)
+		}
+		targetID = existingID
+	} else {
+		// No existing record: update current user in place.
+		if _, err := tx.Exec(ctx,
+			`UPDATE users SET name = $1, is_human = true, updated_at = NOW() WHERE id = $2`,
+			name, currentUserID,
+		); err != nil {
+			return nil, fmt.Errorf("upsert human: update current: %w", err)
+		}
+		targetID = currentUserID
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("upsert human: commit: %w", err)
+	}
+
+	return s.GetUser(ctx, targetID)
 }
 
 // ── Project ───────────────────────────────────────────────────────────────────
