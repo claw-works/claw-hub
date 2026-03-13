@@ -22,6 +22,7 @@ import (
 	"github.com/claw-works/pincer/internal/project"
 	"github.com/claw-works/pincer/internal/report"
 	"github.com/claw-works/pincer/internal/room"
+	"github.com/claw-works/pincer/internal/agentreport"
 	"github.com/claw-works/pincer/internal/store"
 	"github.com/claw-works/pincer/internal/task"
 	"github.com/claw-works/pincer/pkg/protocol"
@@ -32,14 +33,15 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	agents   *agent.PGRegistry
-	tasks    *task.PGStore
-	projects *project.PGStore
-	reports  *report.PGStore
-	hub      *hub.Hub
-	monitor  *hub.MonitorHub
-	roomHub  *hub.RoomHub
-	rooms    *room.Store
+	agents        *agent.PGRegistry
+	tasks         *task.PGStore
+	projects      *project.PGStore
+	reports       *report.PGStore
+	agentReports  *agentreport.Store
+	hub           *hub.Hub
+	monitor       *hub.MonitorHub
+	roomHub       *hub.RoomHub
+	rooms         *room.Store
 }
 
 func getenv(key, fallback string) string {
@@ -74,7 +76,8 @@ func main() {
 		agents:   agent.NewPGRegistry(db),
 		tasks:    task.NewPGStore(db),
 		projects: project.NewPGStore(db),
-		reports:  report.NewPGStore(db),
+		reports:      report.NewPGStore(db),
+		agentReports: agentreport.NewStore(db),
 		hub:      h,
 		monitor:  hub.NewMonitorHub(),
 		roomHub:  hub.NewRoomHub(),
@@ -249,6 +252,17 @@ func main() {
 		r.Patch("/projects/{id}", s.updateProject)
 		r.Get("/projects/{id}/tasks", s.listProjectTasks)
 		r.Get("/projects/{id}/reports", s.listProjectReports)
+
+		// Agent report job routes
+		r.Get("/report-jobs", s.listReportJobs)
+		r.Post("/report-jobs", s.createReportJob)
+		r.Get("/report-jobs/{id}", s.getReportJob)
+		r.Post("/report-jobs/{id}/reports", s.submitAgentReport)
+		r.Get("/report-jobs/{id}/reports", s.listAgentReportsByJob)
+
+		// Agent reports (global)
+		r.Get("/reports", s.listAllAgentReports)
+		r.Get("/reports/{id}", s.getAgentReport)
 
 		// Task routes
 		r.Post("/tasks", s.createTask)
@@ -1319,4 +1333,104 @@ func (s *Server) generateDailyReports(ctx context.Context) {
 			log.Printf("daily-report: posted for project %s (%s)", p.Name, date)
 		}
 	}
+}
+
+// ── Agent Report Job Handlers ─────────────────────────────────────────────────
+
+func (s *Server) listReportJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.agentReports.ListJobs(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, jobs)
+}
+
+func (s *Server) createReportJob(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		CronExpr    string `json:"cron_expr"`
+		AgentID     string `json:"agent_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
+	}
+	job, err := s.agentReports.CreateJob(r.Context(), req.Name, req.Description, req.CronExpr, req.AgentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusCreated, job)
+}
+
+func (s *Server) getReportJob(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	job, err := s.agentReports.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	jsonResp(w, http.StatusOK, job)
+}
+
+func (s *Server) submitAgentReport(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	// verify job exists
+	if _, err := s.agentReports.GetJob(r.Context(), jobID); err != nil {
+		http.Error(w, `{"error":"job not found"}`, http.StatusNotFound)
+		return
+	}
+	var req struct {
+		AgentID  string          `json:"agent_id"`
+		Title    string          `json:"title"`
+		Content  string          `json:"content"`
+		Metadata json.RawMessage `json:"metadata,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Title == "" || req.Content == "" {
+		http.Error(w, `{"error":"title and content required"}`, http.StatusBadRequest)
+		return
+	}
+	rep, err := s.agentReports.SubmitReport(r.Context(), jobID, req.AgentID, req.Title, req.Content, req.Metadata)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusCreated, rep)
+}
+
+func (s *Server) listAgentReportsByJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	limit, offset := 50, 0
+	fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+	fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+	list, err := s.agentReports.ListByJob(r.Context(), jobID, limit, offset)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, list)
+}
+
+func (s *Server) listAllAgentReports(w http.ResponseWriter, r *http.Request) {
+	limit, offset := 50, 0
+	fmt.Sscanf(r.URL.Query().Get("limit"), "%d", &limit)
+	fmt.Sscanf(r.URL.Query().Get("offset"), "%d", &offset)
+	list, err := s.agentReports.ListAll(r.Context(), limit, offset)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, list)
+}
+
+func (s *Server) getAgentReport(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rep, err := s.agentReports.GetReport(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	jsonResp(w, http.StatusOK, rep)
 }

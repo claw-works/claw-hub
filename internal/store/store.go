@@ -152,6 +152,31 @@ func (db *DB) Migrate(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to  ON tasks(assigned_agent_id);
 		CREATE INDEX IF NOT EXISTS idx_agents_user_id     ON agents(user_id);
 		CREATE INDEX IF NOT EXISTS idx_projects_user_id   ON projects(user_id);
+
+		-- ── Report Jobs & Agent Reports ──────────────────────────────────────────
+		CREATE TABLE IF NOT EXISTS report_jobs (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			cron_expr   TEXT NOT NULL DEFAULT '',
+			agent_id    TEXT REFERENCES agents(id),
+			enabled     BOOLEAN NOT NULL DEFAULT true,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+
+		CREATE TABLE IF NOT EXISTS agent_reports (
+			id         TEXT PRIMARY KEY,
+			job_id     TEXT NOT NULL REFERENCES report_jobs(id) ON DELETE CASCADE,
+			agent_id   TEXT REFERENCES agents(id),
+			title      TEXT NOT NULL,
+			content    TEXT NOT NULL DEFAULT '',
+			metadata   JSONB,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_agent_reports_job_id    ON agent_reports(job_id);
+		CREATE INDEX IF NOT EXISTS idx_agent_reports_created_at ON agent_reports(created_at DESC);
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
