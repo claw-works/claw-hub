@@ -112,7 +112,7 @@ func (s *PGStore) ListFiltered(ctx context.Context, f ListFilter) ([]*Task, erro
 		n++
 	}
 
-	base += " ORDER BY priority DESC, created_at ASC"
+	base += " ORDER BY updated_at DESC"
 
 	if f.Limit > 0 {
 		if f.Limit > 500 {
