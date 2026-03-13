@@ -308,6 +308,22 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Capabilities == nil {
 		req.Capabilities = []string{}
 	}
+	// Human registration: upsert by name to prevent duplicate records.
+	// Bind current session's API key to the named human identity.
+	if req.Type == agent.TypeHuman && req.Name != "" {
+		user := auth.FromContext(r.Context())
+		if user == nil {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		u, err := s.projects.UpsertHumanByName(r.Context(), user.ID, req.Name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResp(w, http.StatusOK, u)
+		return
+	}
 	a, err := s.agents.Register(r.Context(), req.ID, req.Name, req.Capabilities, req.Type)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
