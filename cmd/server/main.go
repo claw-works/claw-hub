@@ -468,6 +468,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if req.AssignedTo == "" {
 		req.AssignedTo = req.AssignedAgentID
 	}
+	if req.RequiredCapabilities == nil {
+		req.RequiredCapabilities = []string{}
+	}
 	user := auth.FromContext(r.Context())
 	t, err := s.tasks.Create(r.Context(), req.Title, req.Description, req.Guidance, req.AcceptanceCriteria, req.RequiredCapabilities, task.Priority(req.Priority), req.ReportChannel, req.ProjectID, req.ParentTaskID, req.TaskType, req.UserStory, user.ID)
 	if err != nil {
