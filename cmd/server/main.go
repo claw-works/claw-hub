@@ -281,6 +281,8 @@ func main() {
 		r.Get("/tasks/recent", s.listRecentTasks)
 		r.Get("/tasks/{id}", s.getTask)
 		r.Get("/tasks/{id}/events", s.getTaskEvents)
+		r.Patch("/tasks/{id}", s.updateTask)
+		r.Patch("/tasks/{id}", s.patchTask)
 		r.Patch("/tasks/{id}/claim", s.claimTask)
 		r.Patch("/tasks/{id}/start", s.startTask)
 		r.Patch("/tasks/{id}/complete", s.completeTask)
@@ -570,6 +572,28 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	t, err := s.tasks.Get(r.Context(), id)
 	if err != nil {
 		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	jsonResp(w, http.StatusOK, t)
+}
+
+func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	user := auth.FromContext(r.Context())
+
+	var p task.UpdateFields
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	t, err := s.tasks.Update(r.Context(), id, user.ID, p)
+	if err != nil {
+		if err.Error() == "task not found or forbidden" {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	jsonResp(w, http.StatusOK, t)
@@ -996,6 +1020,31 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchTask handles PATCH /tasks/:id — partial field update.
+func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	var f task.UpdateFields
+	if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	t, err := s.tasks.Update(r.Context(), id, user.ID, f)
+	if err != nil {
+		if err.Error() == "task not found or forbidden" {
+			http.Error(w, `{"error":"task not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, t)
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {

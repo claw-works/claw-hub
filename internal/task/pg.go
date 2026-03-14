@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/claw-works/pincer/internal/store"
@@ -394,4 +395,84 @@ func nullStr(s string) interface{} {
 		return nil
 	}
 	return s
+}
+// UpdateFields holds the mutable fields for a task update (PATCH /tasks/:id).
+type UpdateFields struct {
+	Title                *string  `json:"title"`
+	Description          *string  `json:"description"`
+	Guidance             *string  `json:"guidance"`
+	UserStory            *string  `json:"user_story"`
+	AcceptanceCriteria   []string `json:"acceptance_criteria"`
+	RequiredCapabilities []string `json:"required_capabilities"`
+	AssignedAgentID      *string  `json:"assigned_agent_id"`
+	ProjectID            *string  `json:"project_id"`
+	ParentTaskID         *string  `json:"parent_task_id"`
+	TaskType             *string  `json:"task_type"`
+	Priority             *int     `json:"priority"`
+}
+
+// Update applies a partial update to a task and returns the updated record.
+// Only supplied (non-nil) fields are written; other fields are left unchanged.
+func (s *PGStore) Update(ctx context.Context, id, ownerID string, f UpdateFields) (*Task, error) {
+	setClauses := []string{"updated_at = NOW()"}
+	args := []interface{}{}
+	argIdx := 1
+
+	addStr := func(col string, v *string) {
+		if v != nil {
+			setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, argIdx))
+			args = append(args, nullStr(*v))
+			argIdx++
+		}
+	}
+	addInt := func(col string, v *int) {
+		if v != nil {
+			setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, argIdx))
+			args = append(args, *v)
+			argIdx++
+		}
+	}
+
+	addStr("title", f.Title)
+	addStr("description", f.Description)
+	addStr("guidance", f.Guidance)
+	addStr("user_story", f.UserStory)
+	addStr("assigned_agent_id", f.AssignedAgentID)
+	addStr("project_id", f.ProjectID)
+	addStr("parent_task_id", f.ParentTaskID)
+	addStr("task_type", f.TaskType)
+	addInt("priority", f.Priority)
+
+	if f.AcceptanceCriteria != nil {
+		setClauses = append(setClauses, fmt.Sprintf("acceptance_criteria = $%d", argIdx))
+		b, _ := json.Marshal(f.AcceptanceCriteria)
+		args = append(args, b)
+		argIdx++
+	}
+	if f.RequiredCapabilities != nil {
+		setClauses = append(setClauses, fmt.Sprintf("required_capabilities = $%d", argIdx))
+		b, _ := json.Marshal(f.RequiredCapabilities)
+		args = append(args, b)
+		argIdx++
+	}
+
+	if len(setClauses) == 1 {
+		// only updated_at — nothing to patch, return current task
+		return s.Get(ctx, id)
+	}
+
+	// WHERE clause: id + owner_id for multi-tenant security
+	args = append(args, id, ownerID)
+	query := fmt.Sprintf(
+		"UPDATE tasks SET %s WHERE id = $%d AND owner_id = $%d",
+		strings.Join(setClauses, ", "), argIdx, argIdx+1,
+	)
+	ct, err := s.db.PG.Exec(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("task update: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return nil, fmt.Errorf("task not found or forbidden")
+	}
+	return s.Get(ctx, id)
 }
