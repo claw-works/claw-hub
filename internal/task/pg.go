@@ -61,6 +61,8 @@ func (s *PGStore) Create(ctx context.Context, title, description, guidance strin
 	var acJSON []byte
 	if len(acceptanceCriteria) > 0 {
 		acJSON, _ = json.Marshal(acceptanceCriteria)
+	} else {
+		acJSON = []byte("[]")
 	}
 
 	var oid interface{}
