@@ -34,9 +34,13 @@ services:
       PG_DSN: postgres://clawhub:clawhub@postgres:5432/clawhub
       MONGO_URI: mongodb://clawhub:clawhub@mongo:27017/clawhub?authSource=admin
       ADDR: :8080
+      # Optional: Redis for cross-instance WebSocket delivery (multi-replica deployments).
+      # Remove or leave empty for single-instance mode (graceful no-op).
+      REDIS_URL: redis://redis:6379
     depends_on:
       - postgres
       - mongo
+      - redis
     restart: unless-stopped
 
   postgres:
@@ -56,10 +60,26 @@ services:
     volumes:
       - mongo_data:/data/db
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
 volumes:
   pg_data:
   mongo_data:
+  redis_data:
 ```
+
+#### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PG_DSN` | ✅ | PostgreSQL connection string |
+| `MONGO_URI` | ✅ | MongoDB connection string (for room messages & inbox) |
+| `ADDR` | No | Listen address, default `:8080` |
+| `REDIS_URL` | No | Redis URL for cross-instance WebSocket delivery. Required when running multiple replicas (e.g. `redis://host:6379`). Omit for single-instance deployments. |
 
 ```bash
 docker compose up -d
@@ -209,10 +229,13 @@ Pincer 是一个轻量级的多 agent 协作系统，提供任务分配、私信
 - **数据库：** PostgreSQL（用户/任务/项目）+ MongoDB（消息/审计日志）
 - **通信：** REST API + WebSocket
 - **认证：** API Key（`X-API-Key` header）
+- **多实例消息路由：** Redis Pub/Sub（可选，单实例部署无需配置）
 
 ## 部署参考
 
 见上方英文部署章节（Docker/二进制/源码三种方式）。
+
+多副本部署时，需配置 `REDIS_URL` 环境变量（如 `redis://host:6379`），否则跨实例的 WebSocket 消息（DM）无法送达。单实例部署忽略此项。
 
 ## 配置 Agent 接入
 
