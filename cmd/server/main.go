@@ -33,6 +33,7 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
+	store         *store.DB
 	agents        *agent.PGRegistry
 	tasks         *task.PGStore
 	projects      *project.PGStore
@@ -73,6 +74,7 @@ func main() {
 	}
 
 	s := &Server{
+		store:    db,
 		agents:   agent.NewPGRegistry(db),
 		tasks:    task.NewPGStore(db),
 		projects: project.NewPGStore(db),
@@ -240,8 +242,10 @@ func main() {
 		r.Post("/agents/register", s.registerAgent)
 		r.Get("/agents", s.listAgents)
 		r.Delete("/agents/{id}", s.deleteAgent)
+		r.Patch("/agents/{id}/owner", s.setAgentOwner)
 		r.Post("/agents/{id}/heartbeat", s.agentHeartbeat)
 		r.Get("/agents/{id}/inbox", s.getInbox)
+		r.Get("/admin/unowned-agents", s.listUnownedAgents)
 		r.Get("/agents/{id}/messages", s.listAgentMessages)
 		r.Get("/conversations", s.listConversation)
 
@@ -1462,4 +1466,60 @@ func (s *Server) getAgentReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, rep)
+}
+
+// ─── Admin / Migration Handlers ────────────────────────────────────────────
+
+// listUnownedAgents returns all agents with user_id IS NULL (for data migration).
+func (s *Server) listUnownedAgents(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.store.PG.Query(r.Context(),
+		`SELECT id, name, COALESCE(type,'agent'), capabilities, status, registered_at, last_heartbeat, COALESCE(user_id,'')
+		 FROM agents WHERE user_id IS NULL ORDER BY registered_at`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var agents []map[string]interface{}
+	for rows.Next() {
+		var id, name, atype, status, uid string
+		var caps []string
+		var regAt, hb interface{}
+		if err := rows.Scan(&id, &name, &atype, &caps, &status, &regAt, &hb, &uid); err != nil {
+			continue
+		}
+		agents = append(agents, map[string]interface{}{
+			"id": id, "name": name, "type": atype,
+			"capabilities": caps, "status": status,
+			"registered_at": regAt, "user_id": uid,
+		})
+	}
+	if agents == nil {
+		agents = []map[string]interface{}{}
+	}
+	jsonResp(w, http.StatusOK, agents)
+}
+
+// setAgentOwner assigns user_id to an agent (one-time migration helper).
+// PATCH /api/v1/agents/:id/owner  body: {"user_id":"<uuid>"}
+func (s *Server) setAgentOwner(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
+		http.Error(w, `{"error":"user_id required"}`, http.StatusBadRequest)
+		return
+	}
+	tag, err := s.store.PG.Exec(r.Context(),
+		`UPDATE agents SET user_id=$1 WHERE id=$2`, req.UserID, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		http.Error(w, `{"error":"agent not found"}`, http.StatusNotFound)
+		return
+	}
+	jsonResp(w, http.StatusOK, map[string]string{"status": "ok"})
 }
