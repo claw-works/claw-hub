@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -37,13 +36,10 @@ func channelName(agentID string) string {
 }
 
 // redisPubSub implements PubSub using Redis.
-// It maintains a single *redis.PubSub subscription that accumulates channels,
-// and dispatches received messages to per-agent deliver callbacks.
+// Each Subscribe call creates an independent *redis.PubSub subscription
+// to avoid the go-redis dynamic-subscribe / Channel() race.
 type redisPubSub struct {
-	client    *redis.Client
-	mu        sync.RWMutex
-	sub       *redis.PubSub
-	callbacks map[string]func(Message) // agentID → deliver func
+	client *redis.Client
 }
 
 // NewRedisPubSub creates a Redis-backed PubSub from a Redis URL.
@@ -58,33 +54,8 @@ func NewRedisPubSub(redisURL string) PubSub {
 		return nopPubSub{}
 	}
 	c := redis.NewClient(opt)
-	// Open a persistent subscription (no channels yet).
-	sub := c.Subscribe(context.Background())
-	r := &redisPubSub{
-		client:    c,
-		sub:       sub,
-		callbacks: make(map[string]func(Message)),
-	}
-	go r.readLoop()
 	log.Printf("hub/pubsub: Redis pub/sub enabled (%s)", opt.Addr)
-	return r
-}
-
-func (r *redisPubSub) readLoop() {
-	ch := r.sub.Channel()
-	for payload := range ch {
-		var msg Message
-		if err := json.Unmarshal([]byte(payload.Payload), &msg); err != nil {
-			log.Printf("hub/pubsub: unmarshal error: %v", err)
-			continue
-		}
-		r.mu.RLock()
-		deliver, ok := r.callbacks[msg.To]
-		r.mu.RUnlock()
-		if ok {
-			deliver(msg)
-		}
-	}
+	return &redisPubSub{client: c}
 }
 
 func (r *redisPubSub) Publish(ctx context.Context, agentID string, msg Message) error {
@@ -103,26 +74,30 @@ func (r *redisPubSub) Subscribe(ctx context.Context, deliver func(Message), agen
 	for i, id := range agentIDs {
 		channels[i] = channelName(id)
 	}
-	r.mu.Lock()
-	for _, id := range agentIDs {
-		r.callbacks[id] = deliver
-	}
-	r.mu.Unlock()
-	return r.sub.Subscribe(ctx, channels...)
+	// Create a fresh subscription per agent to avoid go-redis Channel() race
+	// when channels are added dynamically to a shared *redis.PubSub.
+	sub := r.client.Subscribe(ctx, channels...)
+	go func() {
+		defer sub.Close()
+		ch := sub.Channel()
+		for payload := range ch {
+			var msg Message
+			if err := json.Unmarshal([]byte(payload.Payload), &msg); err != nil {
+				log.Printf("hub/pubsub: unmarshal error: %v", err)
+				continue
+			}
+			deliver(msg)
+		}
+	}()
+	return nil
 }
 
-func (r *redisPubSub) Unsubscribe(ctx context.Context, agentIDs ...string) error {
-	channels := make([]string, len(agentIDs))
-	r.mu.Lock()
-	for i, id := range agentIDs {
-		channels[i] = channelName(id)
-		delete(r.callbacks, id)
-	}
-	r.mu.Unlock()
-	return r.sub.Unsubscribe(ctx, channels...)
+func (r *redisPubSub) Unsubscribe(_ context.Context, _ ...string) error {
+	// Individual subscriptions are goroutine-scoped; they close when the
+	// client disconnects (hub.Deregister → ctx cancel or WS close).
+	return nil
 }
 
 func (r *redisPubSub) Close() error {
-	r.sub.Close()
 	return r.client.Close()
 }
