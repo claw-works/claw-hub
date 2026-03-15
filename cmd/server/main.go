@@ -769,6 +769,17 @@ func (s *Server) approveTask(w http.ResponseWriter, r *http.Request) {
 	t, _ := s.tasks.Get(r.Context(), id)
 	if t != nil && t.AssignedAgentID != "" {
 		s.agents.SetOnline(r.Context(), t.AssignedAgentID)
+		// Notify the agent that their task was approved.
+		s.hub.Send(t.AssignedAgentID, hub.Message{
+			Type: "task.approved",
+			From: "hub",
+			To:   t.AssignedAgentID,
+			Payload: map[string]interface{}{
+				"task_id": t.ID,
+				"title":   t.Title,
+				"status":  "done",
+			},
+		})
 	}
 	s.hub.Broadcast(hub.Message{Type: hub.MsgTypeBroadcast, Payload: map[string]interface{}{"event": "task.done", "task": t}})
 	s.monitor.Broadcast("task.result", map[string]interface{}{"task_id": id, "status": "done", "task": t})
@@ -789,6 +800,19 @@ func (s *Server) rejectTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, _ := s.tasks.Get(r.Context(), id)
+	// Notify the agent that their task was rejected (needs rework).
+	if t != nil && t.AssignedAgentID != "" {
+		s.hub.Send(t.AssignedAgentID, hub.Message{
+			Type: "task.rejected",
+			From: "hub",
+			To:   t.AssignedAgentID,
+			Payload: map[string]interface{}{
+				"task_id":     t.ID,
+				"title":       t.Title,
+				"review_note": req.Reason,
+			},
+		})
+	}
 	s.monitor.Broadcast("task.update", map[string]interface{}{"task_id": id, "status": "rejected", "task": t})
 	jsonResp(w, http.StatusOK, t)
 }
