@@ -613,6 +613,18 @@ func (s *Server) claimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, _ := s.tasks.Get(r.Context(), id)
+	// Push task.assigned notification to the assigned agent via WS/inbox.
+	if req.AgentID != "" && t != nil {
+		s.hub.Send(req.AgentID, hub.Message{
+			Type: hub.MsgTypeTaskAssigned,
+			From: "hub",
+			To:   req.AgentID,
+			Payload: map[string]interface{}{
+				"task_id": t.ID,
+				"title":   t.Title,
+			},
+		})
+	}
 	jsonResp(w, http.StatusOK, t)
 }
 

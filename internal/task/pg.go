@@ -241,12 +241,13 @@ func (s *PGStore) Start(ctx context.Context, id string) bool {
 	return true
 }
 
-// ReassignStale resets tasks stuck in 'running' or 'assigned' longer than timeout back to 'pending'.
+// ReassignStale resets tasks stuck in 'running' longer than timeout back to 'pending'.
+// 'assigned' tasks are NOT reverted — the agent may simply not be online yet.
 // Returns the list of stale agent IDs (so the caller can also mark the agents online).
 func (s *PGStore) ReassignStale(ctx context.Context, timeout time.Duration) []string {
 	rows, err := s.db.PG.Query(ctx,
 		`UPDATE tasks SET status='pending', assigned_agent_id=NULL, assigned_at=NULL, updated_at=NOW()
-		 WHERE status IN ('running', 'assigned') AND assigned_at < NOW() - $1::interval
+		 WHERE status = 'running' AND assigned_at < NOW() - $1::interval
 		 RETURNING id, assigned_agent_id`,
 		fmt.Sprintf("%d seconds", int(timeout.Seconds())),
 	)
