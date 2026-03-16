@@ -88,9 +88,10 @@ func (s *Store) Post(ctx context.Context, roomID, senderAgentID, content string,
 }
 
 // List returns up to limit messages in the room, sorted newest-first.
-// If beforeID is set, returns messages older than that message.
+// If beforeID is set, returns messages older than that message (newest-first).
+// If afterID is set, returns messages newer than that message (oldest-first, for polling).
 // If since is set (RFC3339/ISO8601), returns messages newer than that time (sorted oldest-first for pagination).
-func (s *Store) List(ctx context.Context, roomID string, limit int, beforeID string, since string) ([]*Message, error) {
+func (s *Store) List(ctx context.Context, roomID string, limit int, beforeID, afterID, since string) ([]*Message, error) {
 	if limit <= 0 {
 		limit = defaultLimit
 	}
@@ -99,6 +100,16 @@ func (s *Store) List(ctx context.Context, roomID string, limit int, beforeID str
 		var ref Message
 		if err := s.coll.FindOne(ctx, bson.M{"_id": beforeID}).Decode(&ref); err == nil {
 			filter["created_at"] = bson.M{"$lt": ref.CreatedAt}
+		}
+	}
+	if afterID != "" {
+		var ref Message
+		if err := s.coll.FindOne(ctx, bson.M{"_id": afterID}).Decode(&ref); err == nil {
+			if existing, ok := filter["created_at"].(bson.M); ok {
+				existing["$gt"] = ref.CreatedAt
+			} else {
+				filter["created_at"] = bson.M{"$gt": ref.CreatedAt}
+			}
 		}
 	}
 	if since != "" {
@@ -111,9 +122,9 @@ func (s *Store) List(ctx context.Context, roomID string, limit int, beforeID str
 		}
 	}
 
-	// When since is set, return oldest-first so frontend can paginate forward.
+	// Return oldest-first when paginating forward (after= or since= without before=).
 	sortDir := -1
-	if since != "" && beforeID == "" {
+	if (afterID != "" || since != "") && beforeID == "" {
 		sortDir = 1
 	}
 	opts := mongoOpts.Find().
