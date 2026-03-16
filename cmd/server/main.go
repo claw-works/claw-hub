@@ -265,6 +265,7 @@ func main() {
 
 		// Agent routes
 		r.Post("/agents/register", s.registerAgent)
+		r.Post("/agents/register-human", s.registerHumanAgent)
 		r.Get("/agents", s.listAgents)
 		r.Delete("/agents/{id}", s.deleteAgent)
 		r.Patch("/agents/{id}/owner", s.setAgentOwner)
@@ -1685,4 +1686,29 @@ func (s *Server) backfillOwners(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonResp(w, http.StatusOK, result)
+}
+
+// registerHumanAgent handles POST /agents/register-human
+// Creates or finds a human agent by name within the current tenant.
+// Unlike /auth/register-human, this does NOT modify the caller's user record.
+// Multiple human identities can coexist under the same API key.
+func (s *Server) registerHumanAgent(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
+	}
+	a, err := s.agents.FindOrCreateHumanAgentByName(r.Context(), user.ID, req.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, a)
 }

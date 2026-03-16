@@ -219,3 +219,35 @@ func (r *PGRegistry) FindOrCreateHumanAgent(ctx context.Context, userID, name st
 	}
 	return r.Get(ctx, id)
 }
+
+// FindOrCreateHumanAgentByName finds a human agent by name (tenant-wide),
+// or creates a new one. Does NOT modify the caller's user record.
+// Used for multi-human support where each name is a distinct identity.
+func (r *PGRegistry) FindOrCreateHumanAgentByName(ctx context.Context, tenantUserID, name string) (*Agent, error) {
+	// Find existing human agent with this name in the same tenant (same api_key owner).
+	var existingID string
+	err := r.db.PG.QueryRow(ctx,
+		`SELECT a.id FROM agents a
+		 JOIN users u ON a.user_id = u.id
+		 WHERE a.name = $1 AND a.type = 'human'
+		   AND u.api_key = (SELECT api_key FROM users WHERE id = $2)
+		 LIMIT 1`,
+		name, tenantUserID,
+	).Scan(&existingID)
+	if err == nil {
+		return r.Get(ctx, existingID)
+	}
+
+	// Not found — create new human agent linked to the tenant user.
+	id := uuid.New().String()
+	now := time.Now()
+	_, err = r.db.PG.Exec(ctx,
+		`INSERT INTO agents (id, name, type, capabilities, status, registered_at, last_heartbeat, user_id)
+		 VALUES ($1, $2, 'human', '{}', 'offline', $3, $3, $4)`,
+		id, name, now, tenantUserID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create human agent by name: %w", err)
+	}
+	return r.Get(ctx, id)
+}
