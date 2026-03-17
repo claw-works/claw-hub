@@ -1321,6 +1321,11 @@ func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
 	s.monitor.Broadcast("room.message", msg)
 	// Push real-time event to room-chat WebSocket subscribers
 	s.roomHub.BroadcastToRoom(roomID, "room.message", msg)
+	// Also push to inbox/ws human clients so they get live updates without refresh
+	s.hub.Broadcast(hub.Message{
+		Type:    "room.message",
+		Payload: msg,
+	})
 	jsonResp(w, http.StatusCreated, msg)
 }
 
