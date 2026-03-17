@@ -976,8 +976,8 @@ func (s *Server) roomChatWsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roomID := chi.URLParam(r, "room_id")
-	// Enforce room ownership: only the user's own room is permitted.
-	if roomID != userRoomID(user) {
+	// Enforce room ownership: allow personal room or project rooms.
+	if !s.isAllowedRoom(r.Context(), user, roomID) {
 		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
 		return
 	}
@@ -1291,9 +1291,8 @@ func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	roomID := chi.URLParam(r, "room_id")
 
-	// Validate that the room belongs to the authenticated user
-	expectedRoomID := userRoomID(user)
-	if roomID != expectedRoomID {
+	// Validate that the room belongs to the authenticated user (personal or project room)
+	if !s.isAllowedRoom(r.Context(), user, roomID) {
 		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
 		return
 	}
@@ -1342,9 +1341,8 @@ func (s *Server) listRoomMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	roomID := chi.URLParam(r, "room_id")
 
-	// Validate that the room belongs to the authenticated user
-	expectedRoomID := userRoomID(user)
-	if roomID != expectedRoomID {
+	// Validate that the room belongs to the authenticated user (personal or project room)
+	if !s.isAllowedRoom(r.Context(), user, roomID) {
 		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
 		return
 	}
@@ -1380,7 +1378,7 @@ func (s *Server) searchRoomMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	roomID := chi.URLParam(r, "room_id")
-	if roomID != userRoomID(user) {
+	if !s.isAllowedRoom(r.Context(), user, roomID) {
 		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
 		return
 	}
@@ -1425,6 +1423,27 @@ func userRoomID(u *project.User) string {
 		return u.RoomID
 	}
 	return room.DefaultRoomID(u.ID)
+}
+
+// isAllowedRoom returns true if the user is allowed to access the given room.
+// Allows access if roomID matches:
+//   - the user's own personal room (user.room_id), OR
+//   - a project room (project.room_id) where project.user_id == user.id
+func (s *Server) isAllowedRoom(ctx context.Context, user *project.User, roomID string) bool {
+	if roomID == userRoomID(user) {
+		return true
+	}
+	// Check project rooms
+	projects, err := s.projects.ListProjects(ctx, user.ID)
+	if err != nil {
+		return false
+	}
+	for _, p := range projects {
+		if p.RoomID == roomID {
+			return true
+		}
+	}
+	return false
 }
 
 func jsonResp(w http.ResponseWriter, code int, v interface{}) {
