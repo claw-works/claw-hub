@@ -230,9 +230,11 @@ func (s *PGStore) Claim(ctx context.Context, id, agentID string) bool {
 }
 
 // Start transitions a task from assigned → running (agent sent TASK_UPDATE status=running).
+// assigned_at is refreshed here so that ReassignStale's timeout counts from when
+// the agent actually started working, not from when it first claimed the task.
 func (s *PGStore) Start(ctx context.Context, id string) bool {
 	tag, err := s.db.PG.Exec(ctx,
-		`UPDATE tasks SET status='running', updated_at=NOW()
+		`UPDATE tasks SET status='running', assigned_at=NOW(), updated_at=NOW()
 		 WHERE id=$1 AND status='assigned'`, id)
 	if err != nil || tag.RowsAffected() == 0 {
 		return false
