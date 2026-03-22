@@ -1,3 +1,5 @@
 *.bin
 claw-hub*
 /server
+pincer-linux-arm64
+*-linux-arm64
