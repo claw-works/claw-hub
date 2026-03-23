@@ -329,6 +329,7 @@ func main() {
 		r.Post("/rooms/{room_id}/messages", s.postRoomMessage)
 		r.Get("/rooms/{room_id}/messages", s.listRoomMessages)
 		r.Get("/rooms/{room_id}/messages/search", s.searchRoomMessages)
+		r.Post("/rooms/{room_id}/typing", s.postRoomTyping)
 		r.Get("/messages/search", s.searchDMMessages)
 		// Room chat WebSocket — real-time push for group chat
 		r.Get("/rooms/{room_id}/ws", s.roomChatWsHandler)
@@ -1888,4 +1889,51 @@ func (s *Server) enrichRoomMessages(ctx context.Context, msgs []*room.Message) {
 			m.Quote.SenderName = seen[m.Quote.SenderAgentID]
 		}
 	}
+}
+
+// postRoomTyping pushes an agent_replying or agent_replying_done event to a room's WebSocket subscribers.
+// This lets agents signal when they start/stop composing a reply (e.g. to show a typing indicator in the UI).
+//
+// POST /rooms/{room_id}/typing
+// Body: {"agent_id": "<id>", "event": "agent_replying" | "agent_replying_done"}
+func (s *Server) postRoomTyping(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	if user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "room_id")
+	if !s.isAllowedRoom(r.Context(), user, roomID) {
+		http.Error(w, `{"error":"room not found"}`, http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		AgentID string `json:"agent_id"`
+		Event   string `json:"event"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.AgentID == "" {
+		http.Error(w, `{"error":"agent_id required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Event != "agent_replying" && req.Event != "agent_replying_done" {
+		http.Error(w, `{"error":"event must be agent_replying or agent_replying_done"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Optionally resolve agent name for richer payload.
+	agentName := ""
+	if a, err := s.agents.Get(r.Context(), req.AgentID); err == nil {
+		agentName = a.Name
+	}
+
+	payload := map[string]interface{}{
+		"room_id":    roomID,
+		"agent_id":   req.AgentID,
+		"agent_name": agentName,
+	}
+
+	s.roomHub.BroadcastToRoom(roomID, req.Event, payload)
+	s.monitor.Broadcast(req.Event, payload)
+	w.WriteHeader(http.StatusNoContent)
 }
