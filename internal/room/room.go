@@ -26,6 +26,7 @@ const (
 type QuotedMessage struct {
 	ID            string `bson:"id"             json:"id"`
 	SenderAgentID string `bson:"sender_agent_id" json:"sender_agent_id"`
+	SenderName    string `bson:"-"              json:"sender_name,omitempty"`
 	Content       string `bson:"content"        json:"content"`
 }
 
@@ -34,6 +35,7 @@ type Message struct {
 	ID            string                 `bson:"_id"      json:"id"`
 	RoomID        string                 `bson:"room_id"  json:"room_id"`
 	SenderAgentID string                 `bson:"sender_agent_id" json:"sender_agent_id"`
+	SenderName    string                 `bson:"-"              json:"sender_name,omitempty"`
 	Content       string                 `bson:"content"  json:"content"`
 	QuoteID       string                 `bson:"quote_id,omitempty"  json:"quote_id,omitempty"`
 	Quote         *QuotedMessage         `bson:"quote,omitempty"     json:"quote,omitempty"`

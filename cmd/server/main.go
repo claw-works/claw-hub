@@ -1364,6 +1364,7 @@ func (s *Server) postRoomMessage(w http.ResponseWriter, r *http.Request) {
 		Type:    "room.message",
 		Payload: msg,
 	})
+	s.enrichRoomMessages(r.Context(), []*room.Message{msg})
 	jsonResp(w, http.StatusCreated, msg)
 }
 
@@ -1402,6 +1403,7 @@ func (s *Server) listRoomMessages(w http.ResponseWriter, r *http.Request) {
 	if msgs == nil {
 		msgs = []*room.Message{}
 	}
+	s.enrichRoomMessages(r.Context(), msgs)
 	jsonResp(w, http.StatusOK, msgs)
 }
 
@@ -1434,6 +1436,7 @@ func (s *Server) searchRoomMessages(w http.ResponseWriter, r *http.Request) {
 	if msgs == nil {
 		msgs = []*room.Message{}
 	}
+	s.enrichRoomMessages(r.Context(), msgs)
 	jsonResp(w, http.StatusOK, map[string]interface{}{"items": msgs, "total": total})
 }
 
@@ -1859,4 +1862,30 @@ func (s *Server) registerHumanAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, a)
+}
+
+// enrichRoomMessages batch-resolves sender names for a slice of room messages.
+// Names are fetched per unique sender_agent_id and filled into SenderName (not stored in DB).
+func (s *Server) enrichRoomMessages(ctx context.Context, msgs []*room.Message) {
+	// collect unique IDs
+	seen := map[string]string{}
+	for _, m := range msgs {
+		seen[m.SenderAgentID] = ""
+		if m.Quote != nil {
+			seen[m.Quote.SenderAgentID] = ""
+		}
+	}
+	// fetch names
+	for id := range seen {
+		if a, err := s.agents.Get(ctx, id); err == nil {
+			seen[id] = a.Name
+		}
+	}
+	// fill
+	for _, m := range msgs {
+		m.SenderName = seen[m.SenderAgentID]
+		if m.Quote != nil {
+			m.Quote.SenderName = seen[m.Quote.SenderAgentID]
+		}
+	}
 }
