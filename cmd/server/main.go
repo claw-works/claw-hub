@@ -305,6 +305,7 @@ func main() {
 		// Task routes
 		r.Post("/tasks", s.createTask)
 		r.Get("/tasks", s.listTasks)
+		r.Get("/tasks/summary", s.listTasksSummary)
 		r.Get("/tasks/recent", s.listRecentTasks)
 		r.Get("/tasks/{id}", s.getTask)
 		r.Get("/tasks/{id}/events", s.getTaskEvents)
@@ -602,6 +603,33 @@ func (s *Server) listRecentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResp(w, http.StatusOK, tasks)
+}
+
+// listTasksSummary returns lightweight task summaries for AI skill consumption.
+// Omits large fields (description, guidance, result, acceptance_criteria) to
+// drastically reduce response size. Default limit: 50, max: 100.
+//
+// Query params: status, project_id, assigned_to, limit, offset
+func (s *Server) listTasksSummary(w http.ResponseWriter, r *http.Request) {
+	user := auth.FromContext(r.Context())
+	f := task.ListFilter{
+		Status:     r.URL.Query().Get("status"),
+		AssignedTo: r.URL.Query().Get("assigned_to"),
+		ProjectID:  r.URL.Query().Get("project_id"),
+		OwnerID:    user.ID,
+	}
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &f.Limit)
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		fmt.Sscanf(o, "%d", &f.Offset)
+	}
+	summaries, err := s.tasks.ListSummary(r.Context(), f)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResp(w, http.StatusOK, summaries)
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {

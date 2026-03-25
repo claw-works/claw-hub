@@ -493,3 +493,102 @@ func (s *PGStore) Update(ctx context.Context, id, ownerID string, f UpdateFields
 	}
 	return s.Get(ctx, id)
 }
+
+// TaskSummary is a lightweight task representation for AI agent consumption.
+// It omits large fields (description, guidance, result, error, acceptance_criteria)
+// to minimize context size when listing tasks.
+type TaskSummary struct {
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	Status          Status   `json:"status"`
+	Priority        Priority `json:"priority"`
+	AssignedAgentID string   `json:"assigned_agent_id,omitempty"`
+	ProjectID       string   `json:"project_id,omitempty"`
+	TaskType        string   `json:"task_type,omitempty"`
+	CreatedAt       int64    `json:"created_at"` // unix timestamp
+	UpdatedAt       int64    `json:"updated_at"` // unix timestamp
+}
+
+// ListSummary returns lightweight task summaries filtered by the given criteria.
+// Designed for AI skill calls to avoid 100KB+ JSON responses.
+func (s *PGStore) ListSummary(ctx context.Context, f ListFilter) ([]*TaskSummary, error) {
+	base := `SELECT id, title, status, priority,
+	                COALESCE(assigned_agent_id,''), COALESCE(project_id,''),
+	                COALESCE(task_type,'task'), created_at, updated_at
+	         FROM tasks WHERE 1=1`
+	args := []interface{}{}
+	n := 1
+
+	switch f.Status {
+	case "active":
+		base += " AND status NOT IN ('done','failed')"
+	case "":
+		// no filter
+	default:
+		base += fmt.Sprintf(" AND status=$%d", n)
+		args = append(args, f.Status)
+		n++
+	}
+
+	if f.ProjectID != "" {
+		base += fmt.Sprintf(" AND project_id=$%d", n)
+		args = append(args, f.ProjectID)
+		n++
+	}
+
+	if f.AssignedTo != "" {
+		base += fmt.Sprintf(" AND assigned_agent_id=$%d", n)
+		args = append(args, f.AssignedTo)
+		n++
+	}
+
+	if f.OwnerID != "" {
+		base += fmt.Sprintf(" AND owner_id=$%d", n)
+		args = append(args, f.OwnerID)
+		n++
+	}
+
+	base += " ORDER BY updated_at DESC"
+
+	limit := f.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	base += fmt.Sprintf(" LIMIT $%d OFFSET $%d", n, n+1)
+	args = append(args, limit, f.Offset)
+
+	rows, err := s.db.PG.Query(ctx, base, args...)
+	if err != nil {
+		return nil, err
+	}
+	type closer interface{ Close() }
+	if c, ok := rows.(closer); ok {
+		defer c.Close()
+	}
+	type rower interface {
+		Next() bool
+		Scan(...any) error
+		Err() error
+	}
+	r := rows.(rower)
+	result := make([]*TaskSummary, 0)
+	for r.Next() {
+		var ts TaskSummary
+		var createdAt, updatedAt interface{}
+		if err := r.Scan(
+			&ts.ID, &ts.Title, &ts.Status, &ts.Priority,
+			&ts.AssignedAgentID, &ts.ProjectID, &ts.TaskType,
+			&createdAt, &updatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if t, ok := createdAt.(interface{ Unix() int64 }); ok {
+			ts.CreatedAt = t.Unix()
+		}
+		if t, ok := updatedAt.(interface{ Unix() int64 }); ok {
+			ts.UpdatedAt = t.Unix()
+		}
+		result = append(result, &ts)
+	}
+	return result, r.Err()
+}
